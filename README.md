@@ -37,21 +37,49 @@ npm run db:migrate:local   # 手元用のDBを作る（最初の1回だけ）
 npm run dev                # http://localhost:8787 で起動
 ```
 
-## Cloudflare にデプロイする
+## Cloudflare へのデプロイ
+
+GitHub の `main` ブランチにプッシュすると、Cloudflare の Workers Builds が自動でデプロイします。本番のデータベース（D1 の `yunogasns`）は作成済みで、IDは `wrangler.jsonc` に書いてあります。
+
+### 最初の1回だけ：GitHub と Cloudflare をつなぐ
+
+Cloudflare ダッシュボードの Workers & Pages →「Create an app」→ リポジトリの取り込みで、このリポジトリを選び、次のように設定して Deploy を押します。
+
+| 項目 | 設定 |
+| --- | --- |
+| Project name | `yunogasns`（`wrangler.jsonc` の `name` と違うとビルドが失敗します） |
+| Build command | 空のまま |
+| Deploy command | `npx wrangler deploy` |
+| Enable Preview builds | オフ |
+| Protect with Cloudflare Access | オフ（オンにすると、見る人にログインが必要になります） |
+
+公開URLは `https://yunogasns.<あなたのサブドメイン>.workers.dev` です。
+
+### テーブルを変更したとき
+
+Workers Builds が使うAPIトークンには D1 を操作する権限がないため、テーブルの変更はビルドでは反映されません。`migrations/` にファイルを追加したら、プッシュする前にPCから本番のデータベースに反映してください。
 
 ```sh
-npx wrangler login          # ブラウザでCloudflareアカウントにログイン
-npm run deploy              # 初回は D1 データベース「yunogasns」も自動で作られる
-npm run db:migrate:remote   # 本番のDBにテーブルを作る（初回と、migrations/ を追加したとき）
+npx wrangler login          # まだログインしていなければ
+npm run db:migrate:remote
 ```
 
-- 初回の `npm run deploy` で D1 データベースが作られ、`wrangler.jsonc` に `database_id` が書き込まれます。この変更はコミットしておいてください。
-- 公開URLは `https://yunogasns.<あなたのサブドメイン>.workers.dev` です（デプロイ時に表示されます）。
-- 初回は、`db:migrate:remote` が終わるまでの数十秒はAPIがエラーになります。
+### データベースを作り直すとき（別のCloudflareアカウントで動かす場合など）
 
-うまくいかないとき：
+```sh
+npx wrangler d1 create yunogasns --location apac   # 表示された database_id を wrangler.jsonc に書く
+npm run db:migrate:remote
+```
 
-- **データベースが自動で作られない**：`npx wrangler d1 create yunogasns` を実行し、表示された `database_id` を `wrangler.jsonc` の `d1_databases` に追記してから、もう一度デプロイしてください。
+### GitHub 連携を使わず、PCから直接デプロイするとき
+
+```sh
+npx wrangler login
+npm run deploy
+```
+
+### うまくいかないとき
+
 - **`ratelimits` についてのエラーが出る**：連投対策のレート制限が使えない環境です。`wrangler.jsonc` の `ratelimits` と、`src/index.ts` の `checkRateLimit` を呼んでいる2か所を削除すれば、連投対策なしで動きます。
 
 ## DBの設計（Cloudflare D1）
