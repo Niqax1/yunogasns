@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>Yunoga SNS</title>
+  <meta name="description" content="名前をつけてすぐ投稿できる、7日で消える小さなSNS">
+  <meta name="theme-color" content="#ffffff">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <!-- 描画前にテーマを決めて、ライト→ダークのちらつきを防ぐ -->
+  <script src="/theme.js"></script>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-comment" viewBox="0 0 24 24"><path d="M20 11.5a8 8 0 0 1-11.6 7.1L4 20l1.4-4.2A8 8 0 1 1 20 11.5z"/></symbol>
+    <symbol id="i-quote" viewBox="0 0 24 24"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
+  </svg>
+
+  <div class="app">
+    <header class="app-header">
+      <button type="button" id="back-button" class="icon-button" aria-label="戻る" hidden>
+        <svg class="icon" aria-hidden="true"><use href="#i-back"/></svg>
+      </button>
+      <h1 class="app-title">
+        <a href="/" id="brand" class="brand" data-link>Yunoga SNS</a>
+        <span id="view-title" hidden>投稿</span>
+      </h1>
+      <button type="button" id="theme-button" class="icon-button" aria-label="ダークモードにする">
+        <svg class="icon" aria-hidden="true"><use href="#i-moon"/></svg>
+      </button>
+    </header>
+
+    <main>
+      <section id="timeline-view" aria-label="タイムライン">
+        <button type="button" id="new-posts-pill" class="new-posts-pill" hidden>
+          <svg class="icon" aria-hidden="true"><use href="#i-up"/></svg>
+          <span id="new-posts-label">新しい投稿</span>
+        </button>
+        <div id="post-list" class="post-list"></div>
+        <div id="timeline-status" class="list-status"></div>
+      </section>
+
+      <section id="detail-view" aria-label="投稿の詳細" hidden>
+        <div id="detail-post"></div>
+        <div id="detail-body" hidden>
+          <div class="tabs" role="tablist">
+            <button type="button" class="tab" role="tab" id="tab-comments" aria-controls="comments-panel" aria-selected="true">
+              コメント <span class="tab-count" id="detail-comment-count">0</span>
+            </button>
+            <button type="button" class="tab" role="tab" id="tab-quotes" aria-controls="quotes-panel" aria-selected="false">
+              引用 <span class="tab-count" id="detail-quote-count">0</span>
+            </button>
+          </div>
+
+          <div id="comments-panel" role="tabpanel" aria-labelledby="tab-comments">
+            <ol id="comment-list" class="comment-list"></ol>
+            <p id="comments-empty" class="empty-note" hidden>まだコメントはありません</p>
+            <div id="more-comments-wrap" class="list-status" hidden>
+              <button type="button" id="more-comments" class="button button--ghost">コメントをさらに読み込む</button>
+            </div>
+            <form id="comment-form" class="comment-form" novalidate>
+              <label class="name-field">
+                <svg class="icon" aria-hidden="true"><use href="#i-user"/></svg>
+                <span class="visually-hidden">名前</span>
+                <input id="comment-name" name="name" autocomplete="nickname" placeholder="名前（20文字まで）" enterkeyhint="next">
+              </label>
+              <div class="comment-input">
+                <textarea id="comment-body" name="body" rows="1" placeholder="コメントを書く" aria-label="コメント"></textarea>
+                <button type="submit" id="comment-submit" class="button button--primary">送信</button>
+              </div>
+              <div class="form-meta">
+                <span></span>
+                <span id="comment-counter" class="counter"></span>
+              </div>
+            </form>
+          </div>
+
+          <div id="quotes-panel" role="tabpanel" aria-labelledby="tab-quotes" hidden>
+            <div id="quote-list" class="post-list"></div>
+            <div id="quotes-status" class="list-status"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <button type="button" id="compose-button" class="fab" aria-label="投稿する">
+    <svg class="icon" aria-hidden="true"><use href="#i-pen"/></svg>
+  </button>
+
+  <dialog id="compose-dialog" class="sheet" aria-labelledby="compose-title">
+    <form id="compose-form" class="sheet-inner" novalidate>
+      <div class="sheet-header">
+        <button type="button" id="compose-close" class="icon-button" aria-label="閉じる">
+          <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+        </button>
+        <h2 id="compose-title" class="sheet-title">新しい投稿</h2>
+        <button type="submit" id="compose-submit" class="button button--primary">投稿する</button>
+      </div>
+      <p id="compose-error" class="form-error" role="alert" hidden></p>
+      <div class="sheet-body">
+        <label class="name-field">
+          <svg class="icon" aria-hidden="true"><use href="#i-user"/></svg>
+          <span class="visually-hidden">名前</span>
+          <input id="compose-name" name="name" autocomplete="nickname" placeholder="名前（20文字まで）" enterkeyhint="next">
+        </label>
+        <textarea id="compose-body" name="body" rows="4" placeholder="いまどうしてる？" aria-label="本文"></textarea>
+        <div class="form-meta">
+          <span>7日後に自動で消えます</span>
+          <span id="compose-counter" class="counter"></span>
+        </div>
+        <div id="compose-quote" hidden></div>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <noscript><p class="noscript">このサイトを使うにはJavaScriptを有効にしてください。</p></noscript>
+</body>
+</html>

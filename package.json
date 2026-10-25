@@ -1,0 +1,26 @@
+{
+  "name": "yunogasns",
+  "version": "1.0.0",
+  "private": true,
+  "description": "名前をつけてすぐ投稿できる、7日で消える簡易SNS（Cloudflare Workers + D1）",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "typecheck": "wrangler types && tsc"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Niqax1/yunogasns.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Niqax1/yunogasns/issues"
+  },
+  "homepage": "https://github.com/Niqax1/yunogasns#readme",
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "wrangler": "^4.152.0"
+  }
+}

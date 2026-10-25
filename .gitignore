@@ -1,0 +1,7 @@
+node_modules/
+.wrangler/
+.dev.vars*
+.env*
+
+# `npm run typecheck`（wrangler types）で生成される型定義
+worker-configuration.d.ts
