@@ -5,3 +5,6 @@ node_modules/
 
 # `npm run typecheck`（wrangler types）で生成される型定義
 worker-configuration.d.ts
+
+# 手元だけのメモ（アカウントのパスワードなど）。コミットしない
+*.local.md
