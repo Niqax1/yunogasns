@@ -15,6 +15,8 @@
   --on-accent: #ffffff;
   --danger: #d93025;
   --danger-soft: rgba(217, 48, 37, 0.1);
+  --like: #e0245e;
+  --like-soft: rgba(224, 36, 94, 0.1);
   --header-bg: rgba(255, 255, 255, 0.85);
   --backdrop: rgba(15, 20, 25, 0.4);
   --shadow: 0 8px 28px rgba(15, 20, 25, 0.18);
@@ -37,6 +39,8 @@
   --on-accent: #0b0e1f;
   --danger: #ff6b6b;
   --danger-soft: rgba(255, 107, 107, 0.12);
+  --like: #f4588c;
+  --like-soft: rgba(244, 88, 140, 0.14);
   --header-bg: rgba(17, 19, 23, 0.85);
   --backdrop: rgba(0, 0, 0, 0.6);
   --shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
@@ -339,6 +343,21 @@ a.post-time:hover {
   .action:hover {
     background: var(--accent-soft);
     color: var(--accent);
+  }
+}
+
+.action--like.is-liked {
+  color: var(--like);
+}
+
+.action--like.is-liked .icon {
+  fill: currentColor;
+}
+
+@media (hover: hover) {
+  .action--like:hover {
+    background: var(--like-soft);
+    color: var(--like);
   }
 }
 

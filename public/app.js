@@ -14,6 +14,7 @@ const POLL_INTERVAL_MS = 30_000;
 
 const NAME_KEY = "yunogasns:name";
 const THEME_KEY = "yunogasns:theme";
+const LIKES_KEY = "yunogasns:likes";
 const APP_TITLE = document.title;
 
 // ---- 画面の要素 ----
@@ -69,6 +70,10 @@ const ui = {
 
 /** 取得済みの投稿（id → 投稿）。引用ボタンなどから投稿の中身を引くのに使う */
 const posts = new Map();
+
+/** このブラウザでいいねした投稿の id。ログインがないので、二重に押せないようにブラウザに保存する */
+const likedIds = loadLikedIds();
+const likesSending = new Set();
 
 const timeline = {
   loaded: false,
@@ -155,6 +160,25 @@ function saveName(name) {
     localStorage.setItem(NAME_KEY, name);
   } catch {
     // 保存できない環境（プライベートモードなど）でも投稿はできる
+  }
+}
+
+function loadLikedIds() {
+  try {
+    const ids = JSON.parse(localStorage.getItem(LIKES_KEY) ?? "[]");
+    // id は作成時刻なので、7日を過ぎて消えた投稿のものはここで捨てる
+    const cutoff = Date.now() - RETENTION_MS;
+    return new Set(Array.isArray(ids) ? ids.filter((id) => Number.isSafeInteger(id) && id >= cutoff) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveLikedIds() {
+  try {
+    localStorage.setItem(LIKES_KEY, JSON.stringify([...likedIds]));
+  } catch {
+    // 保存できなくても、このページを開いているあいだは覚えている
   }
 }
 
@@ -347,8 +371,25 @@ function renderPost(post, { withQuote = true } = {}) {
           h("span", { class: "visually-hidden" }, "引用"),
           h("span", { class: "quote-count" }, countLabel(post.quoteCount)),
         ),
+        likeButton(post),
       ),
     ),
+  );
+}
+
+function likeButton(post, { withLabel = false } = {}) {
+  const liked = likedIds.has(post.id);
+  return h(
+    "button",
+    {
+      type: "button",
+      class: liked ? "action action--like is-liked" : "action action--like",
+      dataset: { action: "like" },
+      "aria-pressed": String(liked),
+    },
+    icon("heart"),
+    withLabel ? "いいね" : h("span", { class: "visually-hidden" }, "いいね"),
+    h("span", { class: "like-count" }, countLabel(post.likeCount)),
   );
 }
 
@@ -394,6 +435,7 @@ function renderDetailPost(post) {
       { class: "post-actions" },
       h("button", { type: "button", class: "action", dataset: { action: "comment" } }, icon("comment"), "コメントする"),
       h("button", { type: "button", class: "action", dataset: { action: "quote" } }, icon("quote"), "引用する"),
+      likeButton(post, { withLabel: true }),
     ),
   );
 }
@@ -426,15 +468,17 @@ function insertById(list, el, id, newestFirst) {
   list.insertBefore(el, next ?? null);
 }
 
+const COUNT_SELECTORS = { commentCount: ".comment-count", quoteCount: ".quote-count", likeCount: ".like-count" };
+
 /** 件数が変わったとき、保存している投稿データと、表示中のカードをそろえる */
 function setCounts(id, counts) {
   const post = posts.get(id);
   if (post) Object.assign(post, counts);
   for (const card of document.querySelectorAll(`.post[data-id="${id}"]`)) {
-    const comment = card.querySelector(".comment-count");
-    const quote = card.querySelector(".quote-count");
-    if (comment && counts.commentCount !== undefined) comment.textContent = countLabel(counts.commentCount);
-    if (quote && counts.quoteCount !== undefined) quote.textContent = countLabel(counts.quoteCount);
+    for (const [key, selector] of Object.entries(COUNT_SELECTORS)) {
+      const el = card.querySelector(selector);
+      if (el && counts[key] !== undefined) el.textContent = countLabel(counts[key]);
+    }
   }
   if (detail.id === id) renderDetailCounts();
 }
@@ -773,6 +817,46 @@ function renderQuotesStatus() {
   }
 }
 
+// ---- いいね ----
+
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+
+async function toggleLike(id) {
+  const post = posts.get(id);
+  if (!post || likesSending.has(id)) return;
+  const liked = !likedIds.has(id);
+  const before = post.likeCount;
+  likesSending.add(id);
+  // 押した瞬間に表示を切り替え、送信に失敗したら元に戻す
+  showLike(id, liked, Math.max(0, before + (liked ? 1 : -1)), liked);
+  try {
+    const { likeCount } = await api(`/api/posts/${id}/like`, { method: "POST", body: { liked } });
+    showLike(id, liked, likeCount, false);
+  } catch (error) {
+    showLike(id, !liked, before, false);
+    toast(error.message);
+  } finally {
+    likesSending.delete(id);
+  }
+}
+
+function showLike(id, liked, likeCount, animate) {
+  if (liked) likedIds.add(id);
+  else likedIds.delete(id);
+  saveLikedIds();
+  setCounts(id, { likeCount });
+  for (const button of document.querySelectorAll(`.post[data-id="${id}"] [data-action="like"]`)) {
+    button.classList.toggle("is-liked", liked);
+    button.setAttribute("aria-pressed", String(liked));
+    if (animate && !reducedMotion.matches) {
+      button.querySelector(".icon")?.animate(
+        [{ transform: "scale(1)" }, { transform: "scale(1.35)" }, { transform: "scale(1)" }],
+        { duration: 300, easing: "ease-out" },
+      );
+    }
+  }
+}
+
 // ---- コメントの投稿 ----
 
 function updateCommentForm() {
@@ -975,6 +1059,9 @@ function runAction(action, el) {
       break;
     case "quote":
       if (post) openCompose({ quote: post });
+      break;
+    case "like":
+      if (post) toggleLike(post.id);
       break;
     case "compose":
       openCompose();

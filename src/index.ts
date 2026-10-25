@@ -18,7 +18,7 @@ const MAX_REQUEST_BYTES = 8 * 1024;
 // 投稿の取得に共通する部分。?1 には「これより古いものは期限切れ」とする時刻を渡す。
 // 引用元は同じテーブルから結合して取り、期限切れ・削除済みなら q_* が NULL になる。
 const SELECT_POSTS = `
-  SELECT p.id, p.name, p.body, p.quote_id, p.comment_count, p.quote_count,
+  SELECT p.id, p.name, p.body, p.quote_id, p.comment_count, p.quote_count, p.like_count,
          q.id AS q_id, q.name AS q_name, q.body AS q_body
   FROM posts p
   LEFT JOIN posts q ON q.id = p.quote_id AND q.id >= ?1`;
@@ -40,6 +40,7 @@ type PostRow = {
   quote_id: number | null;
   comment_count: number;
   quote_count: number;
+  like_count: number;
   q_id: number | null;
   q_name: string | null;
   q_body: string | null;
@@ -106,7 +107,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     if (request.method === "POST") return createPost(env, request, now, cutoff);
   }
 
-  const match = /^\/api\/posts\/(\d{1,15})(?:\/(comments|quotes))?$/.exec(url.pathname);
+  const match = /^\/api\/posts\/(\d{1,15})(?:\/(comments|quotes|like))?$/.exec(url.pathname);
   if (match) {
     const postId = Number(match[1]);
     // id は作成時刻なので、期限切れかどうかはDBを見なくても分かる
@@ -116,6 +117,7 @@ async function handleApi(request: Request, env: Env): Promise<Response> {
     if (sub === "comments" && request.method === "GET") return listComments(env, url, postId);
     if (sub === "comments" && request.method === "POST") return createComment(env, request, postId, now, cutoff);
     if (sub === "quotes" && request.method === "GET") return listQuotes(env, url, postId, cutoff);
+    if (sub === "like" && request.method === "POST") return setLike(env, request, postId, cutoff);
   }
 
   throw new HttpError(404, "見つかりません。");
@@ -178,7 +180,7 @@ async function listQuotes(env: Env, url: URL, postId: number, cutoff: number): P
 }
 
 async function createPost(env: Env, request: Request, now: number, cutoff: number): Promise<Response> {
-  await checkRateLimit(env, request);
+  await checkRateLimit(env.WRITE_LIMITER, request);
   const input = await readJson(request);
   const name = cleanText(input.name, "名前", MAX_NAME_LENGTH, false);
   const body = cleanText(input.body, "本文", MAX_BODY_LENGTH, true);
@@ -186,7 +188,7 @@ async function createPost(env: Env, request: Request, now: number, cutoff: numbe
 
   const insert = env.DB.prepare(
     `INSERT INTO posts (id, name, body, quote_id) VALUES (${NEXT_POST_ID}, ?2, ?3, ?4)
-     RETURNING id, name, body, quote_id, comment_count, quote_count`,
+     RETURNING id, name, body, quote_id, comment_count, quote_count, like_count`,
   ).bind(now, name, body, quoteId);
 
   let quoted: QuotedRow | null = null;
@@ -212,7 +214,7 @@ async function createPost(env: Env, request: Request, now: number, cutoff: numbe
 }
 
 async function createComment(env: Env, request: Request, postId: number, now: number, cutoff: number): Promise<Response> {
-  await checkRateLimit(env, request);
+  await checkRateLimit(env.WRITE_LIMITER, request);
   const input = await readJson(request);
   const name = cleanText(input.name, "名前", MAX_NAME_LENGTH, false);
   const body = cleanText(input.body, "本文", MAX_BODY_LENGTH, true);
@@ -232,6 +234,23 @@ async function createComment(env: Env, request: Request, postId: number, now: nu
   return json({ comment: toComment(inserted) }, 201);
 }
 
+/** いいね（{"liked": true}）と、その取り消し（{"liked": false}）。件数だけを増減する */
+async function setLike(env: Env, request: Request, postId: number, cutoff: number): Promise<Response> {
+  await checkRateLimit(env.LIKE_LIMITER, request);
+  const input = await readJson(request);
+  if (typeof input.liked !== "boolean") throw new HttpError(400, "送信内容が正しくありません。");
+
+  const row = await env.DB.prepare(
+    input.liked
+      ? "UPDATE posts SET like_count = like_count + 1 WHERE id = ?1 AND id >= ?2 RETURNING like_count"
+      : "UPDATE posts SET like_count = MAX(like_count - 1, 0) WHERE id = ?1 AND id >= ?2 RETURNING like_count",
+  )
+    .bind(postId, cutoff)
+    .first<{ like_count: number }>();
+  if (!row) throw postNotFound();
+  return json({ likeCount: row.like_count });
+}
+
 function toPost(row: PostRow) {
   return {
     id: row.id,
@@ -240,6 +259,7 @@ function toPost(row: PostRow) {
     body: row.body,
     commentCount: row.comment_count,
     quoteCount: row.quote_count,
+    likeCount: row.like_count,
     // 引用元が消えている場合は quoteId だけが入り、quote は null になる
     quoteId: row.quote_id,
     quote:
@@ -335,9 +355,9 @@ async function readTextWithLimit(request: Request, maxBytes: number): Promise<st
   return new Blob(chunks).text();
 }
 
-async function checkRateLimit(env: Env, request: Request): Promise<void> {
+async function checkRateLimit(limiter: RateLimit, request: Request): Promise<void> {
   const ip = request.headers.get("cf-connecting-ip") ?? "";
-  const { success } = await env.WRITE_LIMITER.limit({ key: rateLimitKey(ip) });
+  const { success } = await limiter.limit({ key: rateLimitKey(ip) });
   if (!success) {
     throw new HttpError(429, "短い時間に送信しすぎです。1分ほど待ってからもう一度お試しください。");
   }

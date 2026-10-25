@@ -22,12 +22,17 @@
     }
   ],
 
-  // 投稿・コメントの連投対策。同じIPから60秒あたり10回まで。
+  // 連投対策。投稿とコメントは合わせて、同じIPから60秒あたり10回まで。いいねは30回まで。
   "ratelimits": [
     {
       "name": "WRITE_LIMITER",
       "namespace_id": "1001",
       "simple": { "limit": 10, "period": 60 }
+    },
+    {
+      "name": "LIKE_LIMITER",
+      "namespace_id": "1002",
+      "simple": { "limit": 30, "period": 60 }
     }
   ],
 
