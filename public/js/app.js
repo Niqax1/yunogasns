@@ -288,7 +288,7 @@ function renderPost(post, { withQuote = true } = {}) {
         h("a", { class: "post-time", href: `/p/${post.id}`, dataset: { link: "" } }, timeEl(post.createdAt)),
         canDelete(post) ? deleteButton() : null,
       ),
-      post.body ? h("div", { class: "post-body" }, linkify(post.body)) : null,
+      post.body ? foldedBody(post.body) : null,
       post.images.length > 0 ? imageGrid(post.images) : null,
       withQuote && post.quoteId !== null ? renderQuoteCard(post.quote) : null,
       h(
@@ -312,6 +312,38 @@ function renderPost(post, { withQuote = true } = {}) {
       ),
     ),
   );
+}
+
+// 長い本文だけ6行（style.css の .post-body.is-folded）で折りたたむ。
+// 100文字未満かつ6行以下の短い本文は、折りたたまずにそのまま全文を出す。
+const FOLD_MIN_LENGTH = 100;
+const FOLD_MIN_LINES = 6;
+
+// 折りたたんだ本文が実際にはみ出しているときだけ「続きを読む」を出す。
+// 表示されたときや、画面の幅が変わって行数が変わったときにも判定し直す。
+const foldObserver = new ResizeObserver((entries) => {
+  for (const { target } of entries) {
+    const more = target.nextElementSibling;
+    if (more?.classList.contains("read-more")) more.hidden = target.scrollHeight <= target.clientHeight + 1;
+  }
+});
+
+/** タイムラインの本文。長いものは折りたたみ、「続きを読む」でその場で全文を出す */
+function foldedBody(text) {
+  const body = h("div", { class: "post-body" }, linkify(text));
+  if ([...text].length < FOLD_MIN_LENGTH && text.split("\n").length <= FOLD_MIN_LINES) return body;
+  body.classList.add("is-folded");
+  foldObserver.observe(body);
+  return [body, h("button", { type: "button", class: "read-more", dataset: { action: "read-more" }, hidden: true }, "続きを読む")];
+}
+
+function unfoldBody(button) {
+  const body = button.previousElementSibling;
+  if (body) {
+    body.classList.remove("is-folded");
+    foldObserver.unobserve(body);
+  }
+  button.remove();
 }
 
 function deleteButton() {
@@ -1130,6 +1162,9 @@ function runAction(action, el) {
       break;
     case "open-image":
       openLightbox(el.dataset.src);
+      break;
+    case "read-more":
+      unfoldBody(el);
       break;
     case "compose":
       openCompose();

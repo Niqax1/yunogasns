@@ -3,7 +3,7 @@
 
 // src/config.ts と同じ値にしておく
 export const MAX_NAME_LENGTH = 20;
-export const MAX_BODY_LENGTH = 280;
+export const MAX_BODY_LENGTH = 1000;
 export const MAX_IMAGES_PER_POST = 4;
 export const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 

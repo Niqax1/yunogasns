@@ -396,6 +396,31 @@ a.post-time:hover {
   overflow-wrap: anywhere;
 }
 
+/* タイムラインの長い本文は6行で折りたたむ（行数を変えるときは public/js/app.js の FOLD_MIN_LINES も） */
+.post-body.is-folded {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  line-clamp: 6;
+}
+
+.read-more {
+  min-height: 32px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+@media (hover: hover) {
+  .read-more:hover {
+    text-decoration: underline;
+  }
+}
+
 .post-actions {
   display: flex;
   gap: 24px;
