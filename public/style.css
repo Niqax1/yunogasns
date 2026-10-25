@@ -231,6 +231,35 @@ a {
   color: var(--accent);
 }
 
+.button--danger {
+  background: transparent;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.button--danger:disabled,
+.button--ghost:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+@media (hover: hover) {
+  .button--danger:not(:disabled):hover {
+    background: var(--danger-soft);
+  }
+}
+
+.button--small {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.button--block {
+  width: 100%;
+  min-height: 44px;
+}
+
 /* ---- タイムライン ---- */
 
 .post-list {
@@ -264,6 +293,7 @@ a {
 
 .avatar {
   display: inline-grid;
+  flex: none;
   place-items: center;
   width: 40px;
   height: 40px;
@@ -273,13 +303,30 @@ a {
   font-size: 17px;
   font-weight: 700;
   line-height: 1;
+  object-fit: cover;
   user-select: none;
+}
+
+img.avatar {
+  background: var(--hover);
 }
 
 .avatar--small {
   width: 22px;
   height: 22px;
   font-size: 11px;
+}
+
+.avatar--header {
+  width: 32px;
+  height: 32px;
+  font-size: 14px;
+}
+
+.avatar--large {
+  width: 88px;
+  height: 88px;
+  font-size: 36px;
 }
 
 .post-head {
@@ -291,10 +338,45 @@ a {
 }
 
 .post-name {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   font-weight: 700;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.post-id {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-sub);
+  font-size: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.icon-button--small {
+  width: 36px;
+  height: 36px;
+}
+
+.icon-button--small .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.delete-button {
+  align-self: center;
+  margin: -8px -10px -8px auto;
+  color: var(--text-sub);
+}
+
+@media (hover: hover) {
+  .delete-button:hover {
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
 }
 
 .post-time {
@@ -361,13 +443,78 @@ a.post-time:hover {
   }
 }
 
+/* 添付された写真（1〜4枚） */
+.image-grid {
+  display: grid;
+  gap: 2px;
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+.image-grid--2,
+.image-grid--3,
+.image-grid--4 {
+  grid-template-columns: 1fr 1fr;
+  aspect-ratio: 16 / 10;
+}
+
+.image-grid--3,
+.image-grid--4 {
+  grid-template-rows: 1fr 1fr;
+}
+
+.image-grid--3 .image-cell:first-child {
+  grid-row: span 2;
+}
+
+.image-cell {
+  display: block;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  background: var(--hover);
+  cursor: zoom-in;
+}
+
+.image-cell img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* 1枚のときは写真の縦横比のまま（縦長の写真は高さを抑えて切り抜く） */
+.image-grid--1 .image-cell img {
+  height: auto;
+  max-height: 480px;
+}
+
 /* 引用元の投稿 */
 .quote-card {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
   margin-top: 8px;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--bg);
+}
+
+.quote-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.quote-thumb {
+  flex: none;
+  width: 64px;
+  height: 64px;
+  border-radius: 10px;
+  object-fit: cover;
 }
 
 .quote-card[data-id] {
@@ -486,7 +633,14 @@ a.post-time:hover {
   gap: 12px;
 }
 
-.detail-head .post-name {
+.detail-author {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.detail-author .post-name {
   font-size: 16px;
 }
 
@@ -581,29 +735,67 @@ a.post-time:hover {
 
 /* ---- 入力フォーム ---- */
 
-.name-field {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-sub);
-}
-
-.name-field input {
-  flex: 1;
+.text-input {
+  width: 100%;
   min-width: 0;
-  padding: 6px 0;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  border-radius: 0;
-  background: transparent;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
   font-size: 16px; /* 16px未満だとiPhoneで入力時に拡大されてしまう */
-  font-weight: 700;
-  color: var(--text);
 }
 
-.name-field input:focus {
+.text-input:focus {
   outline: none;
-  border-bottom-color: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field-label {
+  color: var(--text-sub);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.inline-form {
+  display: flex;
+  gap: 8px;
+}
+
+.inline-form .button {
+  flex: none;
+  min-height: 44px;
+}
+
+.hint {
+  margin: 0;
+  color: var(--text-sub);
+  font-size: 13px;
+}
+
+.hint--center {
+  text-align: center;
+}
+
+/* ファイル選択の input を隠し、ラベル自体をボタンとして見せる */
+.file-button {
+  cursor: pointer;
+}
+
+.file-button:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.file-button.is-disabled {
+  opacity: 0.4;
+  pointer-events: none;
 }
 
 textarea {
@@ -757,6 +949,328 @@ textarea:focus {
 .sheet-body textarea {
   min-height: 120px;
   font-size: 17px;
+}
+
+.compose-author {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.compose-author .avatar {
+  align-self: center;
+}
+
+.compose-images {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.compose-image {
+  position: relative;
+  aspect-ratio: 1;
+}
+
+.compose-image img {
+  width: 100%;
+  height: 100%;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
+.compose-image-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+}
+
+.compose-image-remove .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.compose-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: -10px;
+}
+
+.compose-tools .icon-button {
+  color: var(--accent);
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* ---- 写真の拡大表示 ---- */
+
+.lightbox {
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  max-height: 100%;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.lightbox::backdrop {
+  background: rgba(0, 0, 0, 0.9);
+}
+
+.lightbox[open] {
+  display: grid;
+  place-items: center;
+}
+
+.lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.lightbox-close {
+  position: fixed;
+  top: calc(8px + env(safe-area-inset-top));
+  right: 8px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+}
+
+/* ---- 発行したパスワードの表示 ---- */
+
+.modal {
+  width: min(440px, calc(100% - 32px));
+  padding: 24px;
+  border: none;
+  border-radius: 18px;
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.modal::backdrop {
+  background: var(--backdrop);
+}
+
+.modal-title {
+  margin: 0 0 12px;
+  font-size: 18px;
+}
+
+.credentials {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px 16px;
+  align-items: center;
+  margin: 16px 0;
+}
+
+.credentials dt {
+  color: var(--text-sub);
+  font-size: 14px;
+}
+
+.credentials dd {
+  margin: 0;
+}
+
+.credentials code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  user-select: all;
+  overflow-wrap: anywhere;
+}
+
+.modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ---- ログイン ---- */
+
+.login {
+  padding: 40px 16px;
+}
+
+.login-card {
+  display: grid;
+  gap: 16px;
+  max-width: 360px;
+  margin: 0 auto;
+}
+
+.login-title {
+  margin: 0;
+  font-size: 22px;
+}
+
+.form-error--box {
+  border-radius: 10px;
+}
+
+.account-button {
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  text-decoration: none;
+}
+
+/* ---- アカウント設定・管理画面 ---- */
+
+.page-section {
+  display: grid;
+  gap: 10px;
+  padding: 20px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.section-title {
+  margin: 0;
+  font-size: 15px;
+}
+
+.avatar-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+
+.avatar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.user-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.user-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.user-row-main {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.user-row-meta {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  text-align: right;
+}
+
+.badge {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-toolbar {
+  position: sticky;
+  top: calc(52px + 49px + env(safe-area-inset-top));
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--header-bg);
+  -webkit-backdrop-filter: saturate(180%) blur(12px);
+  backdrop-filter: saturate(180%) blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  cursor: pointer;
+}
+
+.check input,
+.admin-post-check input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.admin-post-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.admin-post {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-post-check {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+}
+
+.admin-post-body {
+  display: -webkit-box;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.danger-zone {
+  border-bottom: none;
+  padding-bottom: calc(32px + env(safe-area-inset-bottom));
+}
+
+.danger-zone .button {
+  justify-self: start;
 }
 
 /* ---- 通知 ---- */

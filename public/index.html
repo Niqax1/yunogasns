@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <title>Yunoga SNS</title>
-  <meta name="description" content="名前をつけてすぐ投稿できる、7日で消える小さなSNS">
+  <meta name="description" content="知り合いだけで使う、7日で消える小さなSNS">
   <meta name="theme-color" content="#ffffff">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <!-- 描画前にテーマを決めて、ライト→ダークのちらつきを防ぐ -->
   <script src="/theme.js"></script>
   <link rel="stylesheet" href="/style.css">
-  <script type="module" src="/app.js"></script>
+  <script type="module" src="/js/app.js"></script>
 </head>
 <body>
   <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -18,11 +18,12 @@
     <symbol id="i-heart" viewBox="0 0 24 24"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z"/></symbol>
     <symbol id="i-quote" viewBox="0 0 24 24"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/></symbol>
     <symbol id="i-pen" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></symbol>
     <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
     <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
     <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
-    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
     <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
   </svg>
 
@@ -33,15 +34,37 @@
       </button>
       <h1 class="app-title">
         <a href="/" id="brand" class="brand" data-link>Yunoga SNS</a>
-        <span id="view-title" hidden>投稿</span>
+        <span id="view-title" hidden></span>
       </h1>
       <button type="button" id="theme-button" class="icon-button" aria-label="ダークモードにする">
         <svg class="icon" aria-hidden="true"><use href="#i-moon"/></svg>
       </button>
+      <a href="/settings" id="account-button" class="account-button" data-link aria-label="アカウント設定" hidden></a>
     </header>
 
     <main>
-      <section id="timeline-view" aria-label="タイムライン">
+      <section id="boot-view" class="list-status" aria-label="読み込み中">
+        <div class="spinner"></div>
+      </section>
+
+      <section id="login-view" class="login" aria-label="ログイン" hidden>
+        <form id="login-form" class="login-card" novalidate>
+          <h2 class="login-title">ログイン</h2>
+          <label class="field">
+            <span class="field-label">ID</span>
+            <input id="login-id" class="text-input" name="username" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="next">
+          </label>
+          <label class="field">
+            <span class="field-label">パスワード</span>
+            <input id="login-password" class="text-input" name="password" type="password" autocomplete="current-password" autocapitalize="off" enterkeyhint="go">
+          </label>
+          <p id="login-error" class="form-error form-error--box" role="alert" hidden></p>
+          <button type="submit" id="login-submit" class="button button--primary button--block">ログイン</button>
+          <p class="hint hint--center">アカウントは管理者が発行します。</p>
+        </form>
+      </section>
+
+      <section id="timeline-view" aria-label="タイムライン" hidden>
         <button type="button" id="new-posts-pill" class="new-posts-pill" hidden>
           <svg class="icon" aria-hidden="true"><use href="#i-up"/></svg>
           <span id="new-posts-label">新しい投稿</span>
@@ -60,6 +83,9 @@
             <button type="button" class="tab" role="tab" id="tab-quotes" aria-controls="quotes-panel" aria-selected="false">
               引用 <span class="tab-count" id="detail-quote-count">0</span>
             </button>
+            <button type="button" class="tab" role="tab" id="tab-likes" aria-controls="likes-panel" aria-selected="false">
+              いいね <span class="tab-count" id="detail-like-count">0</span>
+            </button>
           </div>
 
           <div id="comments-panel" role="tabpanel" aria-labelledby="tab-comments">
@@ -69,11 +95,6 @@
               <button type="button" id="more-comments" class="button button--ghost">コメントをさらに読み込む</button>
             </div>
             <form id="comment-form" class="comment-form" novalidate>
-              <label class="name-field">
-                <svg class="icon" aria-hidden="true"><use href="#i-user"/></svg>
-                <span class="visually-hidden">名前</span>
-                <input id="comment-name" name="name" autocomplete="nickname" placeholder="名前（20文字まで）" enterkeyhint="next">
-              </label>
               <div class="comment-input">
                 <textarea id="comment-body" name="body" rows="1" placeholder="コメントを書く" aria-label="コメント"></textarea>
                 <button type="submit" id="comment-submit" class="button button--primary">送信</button>
@@ -89,12 +110,81 @@
             <div id="quote-list" class="post-list"></div>
             <div id="quotes-status" class="list-status"></div>
           </div>
+
+          <div id="likes-panel" role="tabpanel" aria-labelledby="tab-likes" hidden>
+            <ul id="liker-list" class="user-list"></ul>
+            <div id="likes-status" class="list-status"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="settings-view" class="page" aria-label="アカウント設定" hidden>
+        <div class="page-section">
+          <h2 class="section-title">アイコン</h2>
+          <div class="avatar-editor">
+            <span id="settings-avatar"></span>
+            <div class="avatar-actions">
+              <label class="button button--ghost file-button">
+                <input type="file" id="avatar-input" accept="image/*" class="visually-hidden">画像を選ぶ
+              </label>
+              <button type="button" id="avatar-remove" class="button button--ghost">アイコンを削除</button>
+            </div>
+          </div>
+        </div>
+        <form id="name-form" class="page-section" novalidate>
+          <h2 class="section-title"><label for="name-input">アカウント名</label></h2>
+          <div class="inline-form">
+            <input id="name-input" class="text-input" autocomplete="nickname">
+            <button type="submit" id="name-submit" class="button button--primary">保存</button>
+          </div>
+          <p class="hint">投稿やコメントに表示される名前です。ログインID（<span id="settings-id"></span>）は変わりません。</p>
+        </form>
+        <div id="settings-admin" class="page-section" hidden>
+          <h2 class="section-title">管理</h2>
+          <a href="/admin" class="button button--ghost" data-link>管理画面を開く</a>
+        </div>
+        <div class="page-section">
+          <button type="button" id="logout-button" class="button button--danger">ログアウト</button>
+        </div>
+      </section>
+
+      <section id="admin-view" aria-label="管理画面" hidden>
+        <div class="tabs" role="tablist">
+          <button type="button" class="tab" role="tab" id="admin-tab-accounts" aria-controls="admin-accounts" aria-selected="true">アカウント</button>
+          <button type="button" class="tab" role="tab" id="admin-tab-posts" aria-controls="admin-posts" aria-selected="false">投稿</button>
+        </div>
+
+        <div id="admin-accounts" role="tabpanel" aria-labelledby="admin-tab-accounts">
+          <form id="issue-form" class="page-section" novalidate>
+            <h2 class="section-title"><label for="issue-id">アカウントを発行する</label></h2>
+            <div class="inline-form">
+              <input id="issue-id" class="text-input" placeholder="ID（英数字と _、20文字まで）" autocapitalize="off" autocorrect="off" spellcheck="false">
+              <button type="submit" id="issue-submit" class="button button--primary">発行</button>
+            </div>
+            <p class="hint">パスワードは自動で作られ、発行した直後に一度だけ表示されます。</p>
+          </form>
+          <ul id="account-list" class="user-list"></ul>
+          <div id="accounts-status" class="list-status"></div>
+        </div>
+
+        <div id="admin-posts" role="tabpanel" aria-labelledby="admin-tab-posts" hidden>
+          <div class="admin-toolbar">
+            <label class="check"><input type="checkbox" id="select-all-posts"> すべて選択</label>
+            <button type="button" id="delete-selected" class="button button--danger" disabled>選択した投稿を削除</button>
+          </div>
+          <ul id="admin-post-list" class="admin-post-list"></ul>
+          <div id="admin-posts-status" class="list-status"></div>
+          <div class="page-section danger-zone">
+            <h2 class="section-title">すべての投稿を削除</h2>
+            <p class="hint">全員の投稿・コメント・いいねを削除します。元に戻せません。</p>
+            <button type="button" id="delete-all" class="button button--danger">すべての投稿を削除</button>
+          </div>
         </div>
       </section>
     </main>
   </div>
 
-  <button type="button" id="compose-button" class="fab" aria-label="投稿する">
+  <button type="button" id="compose-button" class="fab" aria-label="投稿する" hidden>
     <svg class="icon" aria-hidden="true"><use href="#i-pen"/></svg>
   </button>
 
@@ -109,19 +199,44 @@
       </div>
       <p id="compose-error" class="form-error" role="alert" hidden></p>
       <div class="sheet-body">
-        <label class="name-field">
-          <svg class="icon" aria-hidden="true"><use href="#i-user"/></svg>
-          <span class="visually-hidden">名前</span>
-          <input id="compose-name" name="name" autocomplete="nickname" placeholder="名前（20文字まで）" enterkeyhint="next">
-        </label>
+        <div id="compose-author" class="compose-author"></div>
         <textarea id="compose-body" name="body" rows="4" placeholder="いまどうしてる？" aria-label="本文"></textarea>
-        <div class="form-meta">
-          <span>7日後に自動で消えます</span>
+        <div id="compose-images" class="compose-images" hidden></div>
+        <div class="compose-tools">
+          <label id="compose-photo-button" class="icon-button file-button" title="写真を追加">
+            <input type="file" id="compose-file" accept="image/*" multiple class="visually-hidden" aria-label="写真を追加">
+            <svg class="icon" aria-hidden="true"><use href="#i-image"/></svg>
+          </label>
+          <span id="compose-photo-hint" class="hint">写真は4枚まで</span>
+          <span class="spacer"></span>
           <span id="compose-counter" class="counter"></span>
         </div>
+        <p class="hint">7日後に自動で消えます</p>
         <div id="compose-quote" hidden></div>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="lightbox" class="lightbox" aria-label="写真">
+    <img id="lightbox-image" alt="">
+    <button type="button" class="icon-button lightbox-close" aria-label="閉じる">
+      <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+    </button>
+  </dialog>
+
+  <dialog id="issued-dialog" class="modal" aria-labelledby="issued-title">
+    <h2 id="issued-title" class="modal-title">アカウントを発行しました</h2>
+    <p class="form-error form-error--box">このパスワードは今しか表示されません。必ず控えてから閉じてください。</p>
+    <dl class="credentials">
+      <dt>ID</dt>
+      <dd><code id="issued-id"></code></dd>
+      <dt>パスワード</dt>
+      <dd><code id="issued-password"></code></dd>
+    </dl>
+    <div class="modal-actions">
+      <button type="button" id="issued-copy" class="button button--ghost">IDとパスワードをコピー</button>
+      <button type="button" id="issued-close" class="button button--primary">控えたので閉じる</button>
+    </div>
   </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>

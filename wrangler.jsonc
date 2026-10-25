@@ -5,11 +5,11 @@
   "compatibility_date": "2026-10-19",
 
   // public/ の中身は静的アセットとして配信する（無料・無制限で、Workerのリクエスト数にも数えられない）。
-  // /api/* だけがWorkerを起動し、それ以外の存在しないパス（/p/123 など）には index.html を返す。
+  // /api/* と画像の /media/* だけがWorkerを起動し、それ以外の存在しないパス（/p/123 など）には index.html を返す。
   "assets": {
     "directory": "./public",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": ["/api/*", "/media/*"]
   },
 
   // 本番のデータベース（`npx wrangler d1 create yunogasns` で作成したもの）。
@@ -22,7 +22,16 @@
     }
   ],
 
-  // 連投対策。投稿とコメントは合わせて、同じIPから60秒あたり10回まで。いいねは30回まで。
+  // 投稿の写真とアイコン画像の保存先（`npx wrangler kv namespace create yunogasns-media` で作成したもの）
+  "kv_namespaces": [
+    {
+      "binding": "MEDIA",
+      "id": "dd40699591b74a88bd8aefb2aeeafd5b"
+    }
+  ],
+
+  // 連投対策。投稿とコメントは合わせて1人60秒あたり10回まで、いいねは30回まで。
+  // ログインの試行は同じIPから60秒あたり10回まで。
   "ratelimits": [
     {
       "name": "WRITE_LIMITER",
@@ -33,10 +42,15 @@
       "name": "LIKE_LIMITER",
       "namespace_id": "1002",
       "simple": { "limit": 30, "period": 60 }
+    },
+    {
+      "name": "LOGIN_LIMITER",
+      "namespace_id": "1003",
+      "simple": { "limit": 10, "period": 60 }
     }
   ],
 
-  // 1時間ごとに7日を過ぎた投稿とそのコメントを削除する（時刻はUTC）。
+  // 1時間ごとに7日を過ぎた投稿とそのコメント・いいね、期限切れのログイン情報を削除する（時刻はUTC）。
   "triggers": {
     "crons": ["0 * * * *"]
   },

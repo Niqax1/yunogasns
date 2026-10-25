@@ -1,25 +1,42 @@
-// yunogasns の画面側の処理。ビルドなしでそのまま動く素のJavaScript（ESモジュール）で書いている。
-// 投稿内容は必ずテキストとしてDOMに入れ、innerHTML は使わない（スクリプトを埋め込まれないように）。
+// yunogasns の画面の中心：ログイン・タイムライン・投稿の詳細・投稿画面・画面の切り替え・新着の確認。
+// アカウント設定は settings.js、管理画面は admin.js にある。ビルドなしでそのまま動く素の JavaScript で書いている。
 
-// ---- 設定 ----
-
-// src/index.ts と同じ値にしておく
-const MAX_NAME_LENGTH = 20;
-const MAX_BODY_LENGTH = 280;
-const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+import { initAdmin, showAdmin } from "./admin.js";
+import { api, setUnauthorizedHandler } from "./api.js";
+import { compressImage } from "./images.js";
+import { navigate, onRoute } from "./router.js";
+import { canDelete, posts, remember, session } from "./state.js";
+import { initSettings, showSettings } from "./settings.js";
+import {
+  $,
+  MAX_BODY_LENGTH,
+  MAX_IMAGES_PER_POST,
+  authorLabel,
+  autoGrow,
+  avatar,
+  countLabel,
+  dateTimeFormat,
+  h,
+  icon,
+  imageGrid,
+  linkify,
+  refreshTimes,
+  spinner,
+  textLength,
+  timeEl,
+  timeLeft,
+  toast,
+  userRow,
+} from "./ui.js";
 
 // 新着を確認する間隔。画面を開いている人1人につき、1時間で120リクエストを使う
 // （Workers の無料枠は1日10万リクエスト。README の「どれくらい使えるか」を参照）
 const POLL_INTERVAL_MS = 30_000;
 
-const NAME_KEY = "yunogasns:name";
 const THEME_KEY = "yunogasns:theme";
-const LIKES_KEY = "yunogasns:likes";
 const APP_TITLE = document.title;
 
 // ---- 画面の要素 ----
-
-const $ = (selector) => document.querySelector(selector);
 
 const ui = {
   themeColor: $('meta[name="theme-color"]'),
@@ -27,31 +44,43 @@ const ui = {
   brand: $("#brand"),
   viewTitle: $("#view-title"),
   themeButton: $("#theme-button"),
-  timelineView: $("#timeline-view"),
+  accountButton: $("#account-button"),
+  views: {
+    boot: $("#boot-view"),
+    login: $("#login-view"),
+    timeline: $("#timeline-view"),
+    detail: $("#detail-view"),
+    settings: $("#settings-view"),
+    admin: $("#admin-view"),
+  },
+  loginForm: $("#login-form"),
+  loginId: $("#login-id"),
+  loginPassword: $("#login-password"),
+  loginError: $("#login-error"),
+  loginSubmit: $("#login-submit"),
   newPostsPill: $("#new-posts-pill"),
   newPostsLabel: $("#new-posts-label"),
   postList: $("#post-list"),
   timelineStatus: $("#timeline-status"),
-  detailView: $("#detail-view"),
   detailPost: $("#detail-post"),
   detailBody: $("#detail-body"),
-  tabComments: $("#tab-comments"),
-  tabQuotes: $("#tab-quotes"),
+  tabs: { comments: $("#tab-comments"), quotes: $("#tab-quotes"), likes: $("#tab-likes") },
+  panels: { comments: $("#comments-panel"), quotes: $("#quotes-panel"), likes: $("#likes-panel") },
   detailCommentCount: $("#detail-comment-count"),
   detailQuoteCount: $("#detail-quote-count"),
-  commentsPanel: $("#comments-panel"),
+  detailLikeCount: $("#detail-like-count"),
   commentList: $("#comment-list"),
   commentsEmpty: $("#comments-empty"),
   moreCommentsWrap: $("#more-comments-wrap"),
   moreComments: $("#more-comments"),
   commentForm: $("#comment-form"),
-  commentName: $("#comment-name"),
   commentBody: $("#comment-body"),
   commentSubmit: $("#comment-submit"),
   commentCounter: $("#comment-counter"),
-  quotesPanel: $("#quotes-panel"),
   quoteList: $("#quote-list"),
   quotesStatus: $("#quotes-status"),
+  likerList: $("#liker-list"),
+  likesStatus: $("#likes-status"),
   composeButton: $("#compose-button"),
   composeDialog: $("#compose-dialog"),
   composeForm: $("#compose-form"),
@@ -59,21 +88,19 @@ const ui = {
   composeClose: $("#compose-close"),
   composeSubmit: $("#compose-submit"),
   composeError: $("#compose-error"),
-  composeName: $("#compose-name"),
+  composeAuthor: $("#compose-author"),
   composeBody: $("#compose-body"),
+  composeImages: $("#compose-images"),
+  composeFile: $("#compose-file"),
+  composePhotoButton: $("#compose-photo-button"),
+  composePhotoHint: $("#compose-photo-hint"),
   composeCounter: $("#compose-counter"),
   composeQuote: $("#compose-quote"),
-  toast: $("#toast"),
+  lightbox: $("#lightbox"),
+  lightboxImage: $("#lightbox-image"),
 };
 
 // ---- 状態 ----
-
-/** 取得済みの投稿（id → 投稿）。引用ボタンなどから投稿の中身を引くのに使う */
-const posts = new Map();
-
-/** このブラウザでいいねした投稿の id。ログインがないので、二重に押せないようにブラウザに保存する */
-const likedIds = loadLikedIds();
-const likesSending = new Set();
 
 const timeline = {
   loaded: false,
@@ -94,93 +121,127 @@ const detail = {
   id: null,
   post: null,
   token: 0, // 別の投稿を開いたら、前の投稿へのリクエスト結果を捨てるための番号
+  tab: "comments",
   commentIds: new Set(),
   lastCommentId: 0,
   hasMoreComments: false,
   quotes: null,
+  likersLoaded: false,
 };
 
+const compose = {
+  quote: null,
+  images: [], // { blob, width, height, url }
+  processing: 0, // 縮小中の写真の枚数
+  sending: false,
+};
+
+const likesSending = new Set();
 let currentView = null;
 let lastPollAt = 0;
-let composeQuote = null;
-let composeSending = false;
 let commentSending = false;
 
-// ---- サーバーとの通信 ----
+// ---- ログイン ----
 
-class ApiError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
-
-async function api(path, { method = "GET", body } = {}) {
-  let response;
+async function boot() {
+  // ログイン導入前に使っていた保存データは不要になったので消す
   try {
-    response = await fetch(path, {
-      method,
-      headers: body === undefined ? undefined : { "content-type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    localStorage.removeItem("yunogasns:name");
+    localStorage.removeItem("yunogasns:likes");
   } catch {
-    throw new ApiError(0, "通信できませんでした。電波の状態を確認してください。");
+    // 保存領域が使えない環境では何もしない
   }
-  const data = await response.json().catch(() => null);
-  if (!response.ok) {
-    // Workers の1日のリクエスト上限を超えたときは、JSONではない 429 が返る
-    const fallback =
-      response.status === 429
-        ? "アクセスが集中しているか、今日の無料枠の上限に達しています。しばらくしてからお試しください。"
-        : `エラーが発生しました（${response.status}）。`;
-    throw new ApiError(response.status, data?.error ?? fallback);
-  }
-  return data;
-}
-
-function remember(post) {
-  const known = posts.get(post.id);
-  if (known) return Object.assign(known, post);
-  posts.set(post.id, post);
-  return post;
-}
-
-// ---- 名前とテーマ（ブラウザの localStorage に保存する） ----
-
-function loadName() {
   try {
-    return localStorage.getItem(NAME_KEY) ?? "";
-  } catch {
-    return "";
+    const { user } = await api("/api/me");
+    startSession(user);
+  } catch (error) {
+    if (error.status !== 401) toast(error.message);
+    showLogin();
   }
 }
 
-function saveName(name) {
+function startSession(user) {
+  session.me = user;
+  renderAccountButton();
+  route();
+}
+
+function showLogin(message = "") {
+  session.me = null;
+  resetContent();
+  setView("login");
+  ui.loginError.textContent = message;
+  ui.loginError.hidden = !message;
+  ui.loginId.focus();
+}
+
+async function submitLogin(event) {
+  event.preventDefault();
+  const id = ui.loginId.value.trim();
+  const password = ui.loginPassword.value.trim();
+  if (!id || !password) {
+    ui.loginError.textContent = "IDとパスワードを入力してください。";
+    ui.loginError.hidden = false;
+    return;
+  }
+  ui.loginSubmit.disabled = true;
   try {
-    localStorage.setItem(NAME_KEY, name);
-  } catch {
-    // 保存できない環境（プライベートモードなど）でも投稿はできる
+    const { user } = await api("/api/login", { method: "POST", body: { id, password } });
+    ui.loginPassword.value = "";
+    ui.loginError.hidden = true;
+    startSession(user);
+  } catch (error) {
+    ui.loginError.textContent = error.message;
+    ui.loginError.hidden = false;
+  } finally {
+    ui.loginSubmit.disabled = false;
   }
 }
 
-function loadLikedIds() {
+async function logout() {
+  if (!confirm("ログアウトしますか？")) return;
   try {
-    const ids = JSON.parse(localStorage.getItem(LIKES_KEY) ?? "[]");
-    // id は作成時刻なので、7日を過ぎて消えた投稿のものはここで捨てる
-    const cutoff = Date.now() - RETENTION_MS;
-    return new Set(Array.isArray(ids) ? ids.filter((id) => Number.isSafeInteger(id) && id >= cutoff) : []);
+    await api("/api/logout", { method: "POST" });
   } catch {
-    return new Set();
+    // 通信に失敗しても、この端末ではログアウトした状態にする
   }
+  history.replaceState(null, "", "/");
+  showLogin();
 }
 
-function saveLikedIds() {
-  try {
-    localStorage.setItem(LIKES_KEY, JSON.stringify([...likedIds]));
-  } catch {
-    // 保存できなくても、このページを開いているあいだは覚えている
-  }
+function renderAccountButton() {
+  ui.accountButton.replaceChildren(avatar(session.me, "header"));
 }
+
+/** 表示中の内容を捨てる（ログアウトしたときや、別の人がログインしたとき） */
+function resetContent() {
+  posts.clear();
+  resetTimeline();
+  detail.token++;
+  Object.assign(detail, { id: null, post: null });
+  if (ui.composeDialog.open) ui.composeDialog.close();
+  clearComposeImages();
+  ui.composeBody.value = "";
+}
+
+function resetTimeline() {
+  Object.assign(timeline, {
+    loaded: false,
+    error: null,
+    hasMore: false,
+    newestId: 0,
+    oldestId: null,
+    pending: [],
+    needsReload: false,
+    scrollY: 0,
+  });
+  timeline.shownIds.clear();
+  ui.postList.replaceChildren();
+  ui.timelineStatus.replaceChildren();
+  updateNewPostsPill();
+}
+
+// ---- テーマ ----
 
 function storedTheme() {
   try {
@@ -210,149 +271,25 @@ function toggleTheme() {
   applyTheme(next);
 }
 
-// ---- 表示用の部品 ----
-
-const SVG_NS = "http://www.w3.org/2000/svg";
-
-/** 要素を作る。文字列の子要素はテキストとして入るので、投稿内容をそのまま渡しても安全 */
-function h(tag, props = {}, ...children) {
-  const el = document.createElement(tag);
-  for (const [key, value] of Object.entries(props)) {
-    if (value === null || value === undefined || value === false) continue;
-    if (key === "class") el.className = value;
-    else if (key === "dataset") Object.assign(el.dataset, value);
-    else el.setAttribute(key, value === true ? "" : String(value));
-  }
-  el.append(...children.flat().filter((child) => child !== null && child !== undefined && child !== false));
-  return el;
-}
-
-function icon(name) {
-  const svg = document.createElementNS(SVG_NS, "svg");
-  svg.setAttribute("class", "icon");
-  svg.setAttribute("aria-hidden", "true");
-  const use = document.createElementNS(SVG_NS, "use");
-  use.setAttribute("href", `#i-${name}`);
-  svg.append(use);
-  return svg;
-}
-
-function spinner() {
-  return h("div", { class: "spinner", role: "img", "aria-label": "読み込み中" });
-}
-
-const segmenter = "Segmenter" in Intl ? new Intl.Segmenter("ja", { granularity: "grapheme" }) : null;
-
-/** 名前の1文字目を、名前ごとに決まった色の丸に入れたアイコン */
-function avatar(name, small = false) {
-  const first = segmenter ? segmenter.segment(name)[Symbol.iterator]().next().value?.segment : Array.from(name)[0];
-  const el = h("span", { class: small ? "avatar avatar--small" : "avatar", "aria-hidden": "true" }, first ?? "?");
-  let hash = 0;
-  for (const char of name) hash = (hash * 31 + char.codePointAt(0)) >>> 0;
-  el.style.setProperty("--hue", String(hash % 360));
-  return el;
-}
-
-// 本文中のURLをリンクにする。URLの直後に日本語が続いても切れるよう、半角のURL文字だけを対象にする
-const URL_PATTERN = /https?:\/\/[\w\-.~:/?#[\]@!$&'()*+,;=%]+/g;
-
-function linkify(text) {
-  const fragment = document.createDocumentFragment();
-  let last = 0;
-  for (const match of text.matchAll(URL_PATTERN)) {
-    const url = trimUrl(match[0]);
-    if (!isValidUrl(url)) continue;
-    fragment.append(text.slice(last, match.index));
-    fragment.append(h("a", { href: url, target: "_blank", rel: "noopener noreferrer nofollow" }, url));
-    last = match.index + url.length;
-  }
-  fragment.append(text.slice(last));
-  return fragment;
-}
-
-// URL.canParse は古いiPhone（iOS 16 以前）にないので使わない
-function isValidUrl(text) {
-  try {
-    new URL(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// 文末の句読点や、対応の取れていない閉じかっこはURLに含めない
-function trimUrl(url) {
-  const count = (text, char) => text.split(char).length - 1;
-  let result = url;
-  for (;;) {
-    const last = result.at(-1);
-    if (".,!?;:'\"".includes(last)) result = result.slice(0, -1);
-    else if (last === ")" && count(result, "(") < count(result, ")")) result = result.slice(0, -1);
-    else return result;
-  }
-}
-
-const dateTimeFormat = new Intl.DateTimeFormat("ja-JP", {
-  year: "numeric",
-  month: "numeric",
-  day: "numeric",
-  weekday: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-});
-
-function timeAgo(ms) {
-  const minutes = Math.floor((Date.now() - ms) / 60_000);
-  if (minutes < 1) return "たった今";
-  if (minutes < 60) return `${minutes}分前`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}時間前`;
-  return `${Math.floor(hours / 24)}日前`;
-}
-
-function timeLeft(createdAt) {
-  const minutes = Math.floor((createdAt + RETENTION_MS - Date.now()) / 60_000);
-  if (minutes < 1) return "まもなく消えます";
-  if (minutes < 60) return `あと${minutes}分で消えます`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `あと${hours}時間で消えます`;
-  const restHours = hours % 24;
-  return `あと${Math.floor(hours / 24)}日${restHours ? `${restHours}時間` : ""}で消えます`;
-}
-
-function timeEl(ms) {
-  return h(
-    "time",
-    { datetime: new Date(ms).toISOString(), title: dateTimeFormat.format(ms), dataset: { ts: ms } },
-    timeAgo(ms),
-  );
-}
-
-/** 「〇分前」などの表示を今の時刻に合わせて更新する */
-function refreshTimes() {
-  for (const el of document.querySelectorAll("time[data-ts]")) el.textContent = timeAgo(Number(el.dataset.ts));
-  for (const el of document.querySelectorAll("[data-expires-from]")) {
-    el.textContent = timeLeft(Number(el.dataset.expiresFrom));
-  }
-}
-
-const countLabel = (count) => (count > 0 ? String(count) : "");
+// ---- 投稿の表示 ----
 
 function renderPost(post, { withQuote = true } = {}) {
   return h(
     "article",
     { class: "post", dataset: { id: post.id } },
-    avatar(post.name),
+    avatar(post.author),
     h(
       "div",
       { class: "post-main" },
       h(
         "div",
         { class: "post-head" },
-        h("span", { class: "post-name" }, post.name),
+        ...authorLabel(post.author),
         h("a", { class: "post-time", href: `/p/${post.id}`, dataset: { link: "" } }, timeEl(post.createdAt)),
+        canDelete(post) ? deleteButton() : null,
       ),
-      h("div", { class: "post-body" }, linkify(post.body)),
+      post.body ? h("div", { class: "post-body" }, linkify(post.body)) : null,
+      post.images.length > 0 ? imageGrid(post.images) : null,
       withQuote && post.quoteId !== null ? renderQuoteCard(post.quote) : null,
       h(
         "div",
@@ -377,15 +314,22 @@ function renderPost(post, { withQuote = true } = {}) {
   );
 }
 
+function deleteButton() {
+  return h(
+    "button",
+    { type: "button", class: "icon-button icon-button--small delete-button", dataset: { action: "delete-post" }, "aria-label": "この投稿を削除" },
+    icon("trash"),
+  );
+}
+
 function likeButton(post, { withLabel = false } = {}) {
-  const liked = likedIds.has(post.id);
   return h(
     "button",
     {
       type: "button",
-      class: liked ? "action action--like is-liked" : "action action--like",
+      class: post.liked ? "action action--like is-liked" : "action action--like",
       dataset: { action: "like" },
-      "aria-pressed": String(liked),
+      "aria-pressed": String(post.liked),
     },
     icon("heart"),
     withLabel ? "いいね" : h("span", { class: "visually-hidden" }, "いいね"),
@@ -396,6 +340,7 @@ function likeButton(post, { withLabel = false } = {}) {
 /** 投稿に埋め込む引用元。quote が null なら引用元は削除済み */
 function renderQuoteCard(quote, { link = true } = {}) {
   if (!quote) return h("div", { class: "quote-card quote-card--deleted" }, "この投稿は削除されました");
+  const thumbnail = quote.images[0];
   return h(
     "div",
     {
@@ -403,16 +348,21 @@ function renderQuoteCard(quote, { link = true } = {}) {
       dataset: link ? { id: quote.id } : null,
       role: link ? "link" : null,
       tabindex: link ? 0 : null,
-      "aria-label": link ? `引用元: ${quote.name}さんの投稿を開く` : null,
+      "aria-label": link ? `引用元: ${quote.author.name}さんの投稿を開く` : null,
     },
     h(
       "div",
-      { class: "post-head" },
-      avatar(quote.name, true),
-      h("span", { class: "post-name" }, quote.name),
-      h("span", { class: "post-time" }, timeEl(quote.createdAt)),
+      { class: "quote-main" },
+      h(
+        "div",
+        { class: "post-head" },
+        avatar(quote.author, "small"),
+        ...authorLabel(quote.author),
+        h("span", { class: "post-time" }, timeEl(quote.createdAt)),
+      ),
+      quote.body ? h("div", { class: "quote-body" }, quote.body) : h("div", { class: "quote-body hint" }, "写真"),
     ),
-    h("div", { class: "quote-body" }, quote.body),
+    thumbnail ? h("img", { class: "quote-thumb", src: thumbnail.url, alt: "", loading: "lazy", decoding: "async" }) : null,
   );
 }
 
@@ -420,8 +370,15 @@ function renderDetailPost(post) {
   return h(
     "article",
     { class: "post post--detail", dataset: { id: post.id } },
-    h("div", { class: "detail-head" }, avatar(post.name), h("span", { class: "post-name" }, post.name)),
-    h("div", { class: "post-body" }, linkify(post.body)),
+    h(
+      "div",
+      { class: "detail-head" },
+      avatar(post.author),
+      h("div", { class: "detail-author" }, ...authorLabel(post.author)),
+      canDelete(post) ? deleteButton() : null,
+    ),
+    post.body ? h("div", { class: "post-body" }, linkify(post.body)) : null,
+    post.images.length > 0 ? imageGrid(post.images) : null,
     post.quoteId !== null ? renderQuoteCard(post.quote) : null,
     h(
       "div",
@@ -433,7 +390,7 @@ function renderDetailPost(post) {
     h(
       "div",
       { class: "post-actions" },
-      h("button", { type: "button", class: "action", dataset: { action: "comment" } }, icon("comment"), "コメントする"),
+      h("button", { type: "button", class: "action", dataset: { action: "comment" } }, icon("comment"), "コメント"),
       h("button", { type: "button", class: "action", dataset: { action: "quote" } }, icon("quote"), "引用する"),
       likeButton(post, { withLabel: true }),
     ),
@@ -444,16 +401,11 @@ function renderComment(comment) {
   return h(
     "li",
     { class: "comment", dataset: { id: comment.id } },
-    avatar(comment.name),
+    avatar(comment.author),
     h(
       "div",
       { class: "comment-main" },
-      h(
-        "div",
-        { class: "post-head" },
-        h("span", { class: "post-name" }, comment.name),
-        h("span", { class: "post-time" }, timeEl(comment.createdAt)),
-      ),
+      h("div", { class: "post-head" }, ...authorLabel(comment.author), h("span", { class: "post-time" }, timeEl(comment.createdAt))),
       h("div", { class: "post-body" }, linkify(comment.body)),
     ),
   );
@@ -481,35 +433,6 @@ function setCounts(id, counts) {
     }
   }
   if (detail.id === id) renderDetailCounts();
-}
-
-let toastTimer = 0;
-
-function toast(message) {
-  ui.toast.textContent = message;
-  ui.toast.classList.add("toast--show");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => ui.toast.classList.remove("toast--show"), 3500);
-}
-
-function autoGrow(textarea) {
-  textarea.style.height = "auto";
-  textarea.style.height = `${textarea.scrollHeight}px`;
-}
-
-function updateCounter(textarea, counter, alwaysShow) {
-  const length = [...textarea.value.trim()].length;
-  counter.textContent = length > 0 || alwaysShow ? `${length} / ${MAX_BODY_LENGTH}` : "";
-  counter.classList.toggle("is-over", length > MAX_BODY_LENGTH);
-  return length;
-}
-
-function validate(name, body) {
-  if (!name) return { field: "name", message: "名前を入力してください。" };
-  if ([...name].length > MAX_NAME_LENGTH) return { field: "name", message: `名前は${MAX_NAME_LENGTH}文字以内にしてください。` };
-  if (!body) return { field: "body", message: "本文を入力してください。" };
-  if ([...body].length > MAX_BODY_LENGTH) return { field: "body", message: `本文は${MAX_BODY_LENGTH}文字以内にしてください。` };
-  return null;
 }
 
 // ---- タイムライン ----
@@ -659,10 +582,20 @@ function updateNewPostsPill() {
 
 async function openDetail(id, { focusComment = false } = {}) {
   const token = ++detail.token;
-  Object.assign(detail, { id, post: null, commentIds: new Set(), lastCommentId: 0, hasMoreComments: false, quotes: null });
+  Object.assign(detail, {
+    id,
+    post: null,
+    commentIds: new Set(),
+    lastCommentId: 0,
+    hasMoreComments: false,
+    quotes: null,
+    likersLoaded: false,
+  });
   ui.commentList.replaceChildren();
   ui.quoteList.replaceChildren();
   ui.quotesStatus.replaceChildren();
+  ui.likerList.replaceChildren();
+  ui.likesStatus.replaceChildren();
   ui.detailBody.hidden = true;
   selectTab("comments");
   // タイムラインで見ていた投稿なら、読み込みを待たずに先に表示しておく
@@ -680,9 +613,9 @@ async function openDetail(id, { focusComment = false } = {}) {
     detail.lastCommentId = data.comments.at(-1)?.id ?? 0;
     detail.hasMoreComments = data.hasMoreComments;
     ui.detailBody.hidden = false;
-    setCounts(post.id, { commentCount: post.commentCount, quoteCount: post.quoteCount });
+    setCounts(post.id, { commentCount: post.commentCount, quoteCount: post.quoteCount, likeCount: post.likeCount });
     renderCommentsState();
-    document.title = `${post.name}さんの投稿 - ${APP_TITLE}`;
+    document.title = `${post.author.name}さんの投稿 - ${APP_TITLE}`;
     if (focusComment) focusCommentForm();
   } catch (error) {
     if (token !== detail.token) return;
@@ -701,14 +634,16 @@ async function openDetail(id, { focusComment = false } = {}) {
 function renderDetailCounts() {
   ui.detailCommentCount.textContent = String(detail.post?.commentCount ?? 0);
   ui.detailQuoteCount.textContent = String(detail.post?.quoteCount ?? 0);
+  ui.detailLikeCount.textContent = String(detail.post?.likeCount ?? 0);
 }
 
 function selectTab(tab) {
-  ui.tabComments.setAttribute("aria-selected", String(tab === "comments"));
-  ui.tabQuotes.setAttribute("aria-selected", String(tab === "quotes"));
-  ui.commentsPanel.hidden = tab !== "comments";
-  ui.quotesPanel.hidden = tab !== "quotes";
-  if (tab === "quotes" && detail.quotes === null && detail.post) loadQuotes();
+  detail.tab = tab;
+  for (const [name, button] of Object.entries(ui.tabs)) button.setAttribute("aria-selected", String(name === tab));
+  for (const [name, panel] of Object.entries(ui.panels)) panel.hidden = name !== tab;
+  if (!detail.post) return;
+  if (tab === "quotes" && detail.quotes === null) loadQuotes();
+  if (tab === "likes" && !detail.likersLoaded) loadLikers();
 }
 
 function focusCommentForm() {
@@ -817,6 +752,23 @@ function renderQuotesStatus() {
   }
 }
 
+/** この投稿にいいねした人の一覧 */
+async function loadLikers() {
+  const { id, token } = detail;
+  detail.likersLoaded = true;
+  ui.likesStatus.replaceChildren(spinner());
+  try {
+    const { users } = await api(`/api/posts/${id}/likes`);
+    if (token !== detail.token) return;
+    ui.likerList.replaceChildren(...users.map((user) => userRow(user)));
+    ui.likesStatus.replaceChildren(users.length === 0 ? h("p", {}, "まだいいねはありません") : "");
+  } catch (error) {
+    if (token !== detail.token) return;
+    detail.likersLoaded = false;
+    ui.likesStatus.replaceChildren(h("p", {}, error.message));
+  }
+}
+
 // ---- いいね ----
 
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
@@ -824,16 +776,21 @@ const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 async function toggleLike(id) {
   const post = posts.get(id);
   if (!post || likesSending.has(id)) return;
-  const liked = !likedIds.has(id);
-  const before = post.likeCount;
+  const liked = !post.liked;
+  const before = { liked: post.liked, likeCount: post.likeCount };
   likesSending.add(id);
   // 押した瞬間に表示を切り替え、送信に失敗したら元に戻す
-  showLike(id, liked, Math.max(0, before + (liked ? 1 : -1)), liked);
+  showLike(id, liked, Math.max(0, post.likeCount + (liked ? 1 : -1)), liked);
   try {
-    const { likeCount } = await api(`/api/posts/${id}/like`, { method: "POST", body: { liked } });
-    showLike(id, liked, likeCount, false);
+    const result = await api(`/api/posts/${id}/like`, { method: "POST", body: { liked } });
+    showLike(id, result.liked, result.likeCount, false);
+    // 「いいねした人」の一覧を開いていれば読み直す
+    if (detail.id === id) {
+      detail.likersLoaded = false;
+      if (detail.tab === "likes") loadLikers();
+    }
   } catch (error) {
-    showLike(id, !liked, before, false);
+    showLike(id, before.liked, before.likeCount, false);
     toast(error.message);
   } finally {
     likesSending.delete(id);
@@ -841,9 +798,8 @@ async function toggleLike(id) {
 }
 
 function showLike(id, liked, likeCount, animate) {
-  if (liked) likedIds.add(id);
-  else likedIds.delete(id);
-  saveLikedIds();
+  const post = posts.get(id);
+  if (post) post.liked = liked;
   setCounts(id, { likeCount });
   for (const button of document.querySelectorAll(`.post[data-id="${id}"] [data-action="like"]`)) {
     button.classList.toggle("is-liked", liked);
@@ -857,31 +813,57 @@ function showLike(id, liked, likeCount, animate) {
   }
 }
 
+// ---- 投稿の削除 ----
+
+async function deletePost(id) {
+  if (!confirm("この投稿を削除しますか？\nコメントやいいねも一緒に消え、元に戻せません。")) return;
+  try {
+    await api(`/api/posts/${id}`, { method: "DELETE" });
+    removePost(id);
+    toast("削除しました");
+    if (currentView === "detail" && detail.id === id) goBack();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+/** 削除した投稿を、表示中のすべての場所から消す */
+function removePost(id) {
+  const post = posts.get(id);
+  if (post?.quoteId != null) {
+    const quoted = posts.get(post.quoteId);
+    if (quoted) setCounts(quoted.id, { quoteCount: Math.max(0, quoted.quoteCount - 1) });
+  }
+  posts.delete(id);
+  timeline.shownIds.delete(id);
+  timeline.pending = timeline.pending.filter((pending) => pending.id !== id);
+  for (const card of document.querySelectorAll(`.post[data-id="${id}"]:not(.post--detail)`)) card.remove();
+  // この投稿を引用している投稿には「削除されました」と表示する
+  for (const quoting of posts.values()) if (quoting.quoteId === id) quoting.quote = null;
+  for (const card of document.querySelectorAll(`.quote-card[data-id="${id}"]`)) card.replaceWith(renderQuoteCard(null));
+  renderTimelineStatus();
+}
+
 // ---- コメントの投稿 ----
 
 function updateCommentForm() {
-  const length = updateCounter(ui.commentBody, ui.commentCounter, false);
+  const length = textLength(ui.commentBody.value);
+  ui.commentCounter.textContent = length > 0 ? `${length} / ${MAX_BODY_LENGTH}` : "";
+  ui.commentCounter.classList.toggle("is-over", length > MAX_BODY_LENGTH);
   ui.commentSubmit.disabled = commentSending || length === 0 || length > MAX_BODY_LENGTH;
 }
 
 async function submitComment(event) {
   event.preventDefault();
   if (commentSending || !detail.post) return;
-  const name = ui.commentName.value.trim();
   const body = ui.commentBody.value.trim();
-  const problem = validate(name, body);
-  if (problem) {
-    toast(problem.message);
-    (problem.field === "name" ? ui.commentName : ui.commentBody).focus();
-    return;
-  }
+  if (!body || [...body].length > MAX_BODY_LENGTH) return;
 
   const postId = detail.id;
   commentSending = true;
   updateCommentForm();
   try {
-    const { comment } = await api(`/api/posts/${postId}/comments`, { method: "POST", body: { name, body } });
-    saveName(name);
+    const { comment } = await api(`/api/posts/${postId}/comments`, { method: "POST", body: { body } });
     ui.commentBody.value = "";
     autoGrow(ui.commentBody);
     // 新着確認がすでに表示していた場合は数えない
@@ -899,31 +881,41 @@ async function submitComment(event) {
 // ---- 投稿画面 ----
 
 function openCompose({ quote = null } = {}) {
-  composeQuote = quote;
+  compose.quote = quote;
   ui.composeTitle.textContent = quote ? "引用して投稿" : "新しい投稿";
   ui.composeBody.placeholder = quote ? "コメントを添えて引用" : "いまどうしてる？";
+  ui.composeAuthor.replaceChildren(avatar(session.me, "small"), ...authorLabel(session.me));
   ui.composeQuote.replaceChildren(quote ? renderQuoteCard(quote, { link: false }) : "");
   ui.composeQuote.hidden = !quote;
-  ui.composeName.value = loadName();
   ui.composeError.hidden = true;
+  renderComposeImages();
   updateComposeForm();
   ui.composeDialog.showModal();
   autoGrow(ui.composeBody);
-  // 名前が保存済みなら、すぐ本文を書き始められるようにする
-  (ui.composeName.value ? ui.composeBody : ui.composeName).focus();
+  ui.composeBody.focus();
 }
 
 function closeCompose() {
-  if (composeSending) return;
-  if (ui.composeBody.value.trim() && !confirm("書きかけの内容を破棄しますか？")) return;
+  if (compose.sending) return;
+  const hasDraft = ui.composeBody.value.trim() || compose.images.length > 0;
+  if (hasDraft && !confirm("書きかけの内容を破棄しますか？")) return;
   ui.composeBody.value = "";
+  clearComposeImages();
   ui.composeDialog.close();
 }
 
 function updateComposeForm() {
-  const length = updateCounter(ui.composeBody, ui.composeCounter, true);
-  ui.composeSubmit.disabled = composeSending || length === 0 || length > MAX_BODY_LENGTH;
-  ui.composeSubmit.textContent = composeSending ? "送信中…" : "投稿する";
+  const length = textLength(ui.composeBody.value);
+  const hasContent = length > 0 || compose.images.length > 0;
+  ui.composeCounter.textContent = `${length} / ${MAX_BODY_LENGTH}`;
+  ui.composeCounter.classList.toggle("is-over", length > MAX_BODY_LENGTH);
+  ui.composeSubmit.disabled = compose.sending || compose.processing > 0 || !hasContent || length > MAX_BODY_LENGTH;
+  ui.composeSubmit.textContent = compose.sending ? "送信中…" : "投稿する";
+  const full = compose.images.length + compose.processing >= MAX_IMAGES_PER_POST;
+  ui.composeFile.disabled = full || compose.sending;
+  ui.composePhotoButton.classList.toggle("is-disabled", ui.composeFile.disabled);
+  ui.composePhotoHint.textContent =
+    compose.processing > 0 ? "写真を準備中…" : `写真 ${compose.images.length} / ${MAX_IMAGES_PER_POST}`;
 }
 
 function showComposeError(message) {
@@ -931,31 +923,85 @@ function showComposeError(message) {
   ui.composeError.hidden = false;
 }
 
+/** 選んだ写真を縮小して、投稿画面に並べる */
+async function addComposeImages(files) {
+  const room = MAX_IMAGES_PER_POST - compose.images.length - compose.processing;
+  if (files.length > room) showComposeError(`写真は${MAX_IMAGES_PER_POST}枚までです。`);
+  const selected = files.slice(0, Math.max(0, room));
+  compose.processing += selected.length;
+  updateComposeForm();
+  for (const file of selected) {
+    try {
+      const { blob, width, height } = await compressImage(file);
+      compose.images.push({ blob, width, height, url: URL.createObjectURL(blob) });
+    } catch (error) {
+      showComposeError(error.message);
+    } finally {
+      compose.processing--;
+      renderComposeImages();
+      updateComposeForm();
+    }
+  }
+}
+
+function renderComposeImages() {
+  ui.composeImages.hidden = compose.images.length === 0;
+  ui.composeImages.replaceChildren(
+    ...compose.images.map((image, index) =>
+      h(
+        "div",
+        { class: "compose-image" },
+        h("img", { src: image.url, alt: "" }),
+        h(
+          "button",
+          { type: "button", class: "compose-image-remove", dataset: { index }, "aria-label": "この写真を外す" },
+          icon("close"),
+        ),
+      ),
+    ),
+  );
+}
+
+function removeComposeImage(index) {
+  const [image] = compose.images.splice(index, 1);
+  if (image) URL.revokeObjectURL(image.url);
+  renderComposeImages();
+  updateComposeForm();
+}
+
+function clearComposeImages() {
+  for (const image of compose.images) URL.revokeObjectURL(image.url);
+  compose.images = [];
+  renderComposeImages();
+}
+
 async function submitCompose(event) {
   event.preventDefault();
-  if (composeSending) return;
-  const name = ui.composeName.value.trim();
+  if (compose.sending || compose.processing > 0) return;
   const body = ui.composeBody.value.trim();
-  const problem = validate(name, body);
-  if (problem) {
-    showComposeError(problem.message);
-    (problem.field === "name" ? ui.composeName : ui.composeBody).focus();
-    return;
-  }
+  if (!body && compose.images.length === 0) return showComposeError("本文を入力するか、写真を追加してください。");
+  if ([...body].length > MAX_BODY_LENGTH) return showComposeError(`本文は${MAX_BODY_LENGTH}文字以内にしてください。`);
 
-  composeSending = true;
+  const form = new FormData();
+  form.append("body", body);
+  if (compose.quote) form.append("quoteId", String(compose.quote.id));
+  form.append("imageSizes", JSON.stringify(compose.images.map((image) => [image.width, image.height])));
+  for (const image of compose.images) form.append("images", image.blob, "photo.jpg");
+
+  compose.sending = true;
+  ui.composeError.hidden = true;
   updateComposeForm();
   try {
-    const { post } = await api("/api/posts", { method: "POST", body: { name, body, quoteId: composeQuote?.id ?? null } });
-    saveName(name);
+    const { post } = await api("/api/posts", { method: "POST", form });
     ui.composeBody.value = "";
+    clearComposeImages();
     ui.composeDialog.close();
     handleCreatedPost(post);
     toast("投稿しました");
   } catch (error) {
     showComposeError(error.message);
   } finally {
-    composeSending = false;
+    compose.sending = false;
     updateComposeForm();
   }
 }
@@ -977,35 +1023,51 @@ function handleCreatedPost(post) {
   if (currentView === "timeline") window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-// ---- 画面の切り替え ----
+// ---- 写真の拡大表示 ----
 
-function navigate(path, options = {}) {
-  if (path !== location.pathname) history.pushState({ inApp: true }, "", path);
-  route(options);
+function openLightbox(src) {
+  ui.lightboxImage.src = src;
+  ui.lightbox.showModal();
 }
 
+// ---- 画面の切り替え ----
+
+const VIEW_TITLES = { detail: "投稿", settings: "アカウント設定", admin: "管理画面" };
+
 function route(options = {}) {
-  const match = /^\/p\/(\d{1,15})\/?$/.exec(location.pathname);
-  if (match) {
-    setView("detail");
-    openDetail(Number(match[1]), options);
+  if (!session.me) {
+    showLogin();
     return;
   }
-  if (location.pathname !== "/") history.replaceState(history.state, "", "/");
-  showTimeline();
+  const path = location.pathname;
+  const post = /^\/p\/(\d{1,15})\/?$/.exec(path);
+  if (post) {
+    setView("detail");
+    openDetail(Number(post[1]), options);
+  } else if (path === "/settings") {
+    setView("settings");
+    showSettings();
+  } else if (path === "/admin" && session.me.isAdmin) {
+    setView("admin");
+    showAdmin();
+  } else {
+    if (path !== "/") history.replaceState(history.state, "", "/");
+    showTimeline();
+  }
 }
 
 function setView(view) {
   if (currentView === "timeline" && view !== "timeline") timeline.scrollY = window.scrollY;
   currentView = view;
-  const isDetail = view === "detail";
-  ui.timelineView.hidden = isDetail;
-  ui.detailView.hidden = !isDetail;
-  ui.backButton.hidden = !isDetail;
-  ui.brand.hidden = isDetail;
-  ui.viewTitle.hidden = !isDetail;
-  ui.composeButton.hidden = isDetail;
-  if (!isDetail) document.title = APP_TITLE;
+  for (const [name, el] of Object.entries(ui.views)) el.hidden = name !== view;
+  const title = VIEW_TITLES[view];
+  ui.backButton.hidden = !title;
+  ui.brand.hidden = Boolean(title);
+  ui.viewTitle.hidden = !title;
+  ui.viewTitle.textContent = title ?? "";
+  ui.composeButton.hidden = view !== "timeline";
+  ui.accountButton.hidden = !session.me || view === "login";
+  document.title = title ? `${title} - ${APP_TITLE}` : APP_TITLE;
 }
 
 function showTimeline() {
@@ -1037,7 +1099,7 @@ function goBack() {
 // ---- 新着の確認 ----
 
 async function poll() {
-  if (document.hidden) return;
+  if (document.hidden || !session.me) return;
   lastPollAt = Date.now();
   try {
     if (currentView === "timeline") await pollTimeline();
@@ -1062,6 +1124,12 @@ function runAction(action, el) {
       break;
     case "like":
       if (post) toggleLike(post.id);
+      break;
+    case "delete-post":
+      if (post) deletePost(post.id);
+      break;
+    case "open-image":
+      openLightbox(el.dataset.src);
       break;
     case "compose":
       openCompose();
@@ -1135,6 +1203,14 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
+ui.loginForm.addEventListener("submit", submitLogin);
+ui.loginId.addEventListener("keydown", (event) => {
+  // 日本語入力の確定の Enter では移動しない
+  if (event.key === "Enter" && !event.isComposing) {
+    event.preventDefault();
+    ui.loginPassword.focus();
+  }
+});
 ui.backButton.addEventListener("click", goBack);
 ui.themeButton.addEventListener("click", toggleTheme);
 ui.composeButton.addEventListener("click", () => openCompose());
@@ -1142,15 +1218,24 @@ ui.newPostsPill.addEventListener("click", async () => {
   await showNewPosts();
   window.scrollTo({ top: 0, behavior: "smooth" });
 });
-ui.tabComments.addEventListener("click", () => selectTab("comments"));
-ui.tabQuotes.addEventListener("click", () => selectTab("quotes"));
+for (const [name, button] of Object.entries(ui.tabs)) button.addEventListener("click", () => selectTab(name));
 ui.moreComments.addEventListener("click", loadMoreComments);
 ui.commentForm.addEventListener("submit", submitComment);
 ui.composeForm.addEventListener("submit", submitCompose);
 ui.composeClose.addEventListener("click", closeCompose);
+ui.composeFile.addEventListener("change", () => {
+  const files = [...(ui.composeFile.files ?? [])];
+  // 同じ写真をもう一度選んでも反応するように、選択を空に戻しておく
+  ui.composeFile.value = "";
+  addComposeImages(files);
+});
+ui.composeImages.addEventListener("click", (event) => {
+  const button = event.target instanceof Element ? event.target.closest(".compose-image-remove") : null;
+  if (button) removeComposeImage(Number(button.dataset.index));
+});
 
 ui.composeDialog.addEventListener("cancel", (event) => {
-  // Escキーやスマホの「戻る」で閉じるときも、書きかけなら確認する
+  // Esc キーやスマホの「戻る」で閉じるときも、書きかけなら確認する
   event.preventDefault();
   closeCompose();
 });
@@ -1165,24 +1250,8 @@ ui.composeDialog.addEventListener("click", (event) => {
   if (pressedOnBackdrop && event.target === ui.composeDialog) closeCompose();
 });
 
-// 名前は入力するたびに保存し、投稿画面とコメント欄で共有する
-for (const [input, other, next] of [
-  [ui.composeName, ui.commentName, ui.composeBody],
-  [ui.commentName, ui.composeName, ui.commentBody],
-]) {
-  input.addEventListener("input", () => {
-    other.value = input.value;
-    saveName(input.value.trim());
-    ui.composeError.hidden = true;
-  });
-  input.addEventListener("keydown", (event) => {
-    // 日本語入力の確定のEnterでは移動しない
-    if (event.key === "Enter" && !event.isComposing) {
-      event.preventDefault();
-      next.focus();
-    }
-  });
-}
+// 拡大表示は、どこを押しても閉じる
+ui.lightbox.addEventListener("click", () => ui.lightbox.close());
 
 for (const [textarea, form, update] of [
   [ui.composeBody, ui.composeForm, updateComposeForm],
@@ -1226,10 +1295,29 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (event) =>
 
 // ---- 起動 ----
 
+onRoute(route);
+setUnauthorizedHandler(() => {
+  if (session.me) showLogin("ログインの有効期限が切れたか、アカウントが削除されました。もう一度ログインしてください。");
+});
+initSettings({
+  // アイコンや名前を変えたら、ヘッダーを描き直し、タイムラインは次に開いたときに読み直す
+  onUserChange: () => {
+    renderAccountButton();
+    posts.clear();
+    resetTimeline();
+  },
+  onLogout: logout,
+});
+initAdmin({
+  onPostsDeleted: () => {
+    posts.clear();
+    resetTimeline();
+  },
+});
+
 history.scrollRestoration = "manual";
 applyTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
-ui.commentName.value = loadName();
 updateCommentForm();
-route();
+boot();
 setInterval(poll, POLL_INTERVAL_MS);
 setInterval(refreshTimes, 60_000);
