@@ -9,6 +9,7 @@ import { getCurrentUser, login, logout } from "./auth";
 import { RETENTION_MS } from "./config";
 import { HttpError, assertSameOrigin, json } from "./http";
 import { serveMedia } from "./media";
+import { createNotice, deleteNotice, listNotices, markNoticesRead } from "./notices";
 import {
   createComment,
   createPost,
@@ -83,9 +84,11 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   if (media?.[1] && method === "GET") return serveMedia(env, media[1]);
 
   if (pathname === "/api/me") {
-    if (method === "GET") return getMe(me);
+    if (method === "GET") return getMe(env, me);
     if (method === "PATCH") return updateMe(env, request, me);
   }
+  if (pathname === "/api/notices" && method === "GET") return listNotices(env, me);
+  if (pathname === "/api/notices/read" && method === "POST") return markNoticesRead(env, me);
   if (pathname === "/api/me/avatar") {
     if (method === "PUT") return setAvatar(env, ctx, request, me);
     if (method === "DELETE") return removeAvatar(env, ctx, me);
@@ -119,6 +122,9 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     if (user?.[1] && method === "DELETE") return deleteUser(env, ctx, me, user[1]);
     if (pathname === "/api/admin/posts/delete" && method === "POST") return deleteSelectedPosts(env, ctx, request);
     if (pathname === "/api/admin/posts/delete-all" && method === "POST") return deleteEveryPost(env, ctx, request);
+    if (pathname === "/api/admin/notices" && method === "POST") return createNotice(env, request, me, now);
+    const notice = /^\/api\/admin\/notices\/(\d{1,15})$/.exec(pathname);
+    if (notice?.[1] && method === "DELETE") return deleteNotice(env, Number(notice[1]));
   }
 
   throw new HttpError(404, "見つかりません。");

@@ -1152,6 +1152,112 @@ textarea:focus {
   border-radius: 10px;
 }
 
+/* ---- お知らせ ---- */
+
+.notice-button {
+  position: relative;
+  text-decoration: none;
+}
+
+.notice-badge {
+  position: absolute;
+  top: 5px;
+  right: 3px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+
+/* タイムラインの上に出す、新しいお知らせの案内 */
+.notice-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.notice-banner .icon {
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
+}
+
+.notice-banner-label {
+  flex: none;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.notice-banner-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.notice-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notice {
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.notice-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-sub);
+  font-size: 13px;
+}
+
+.notice-head .button {
+  margin-left: auto;
+}
+
+.notice-title {
+  margin: 6px 0 0;
+  font-size: 17px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.notice-body {
+  margin-top: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.badge--new {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+textarea.text-input {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.list-heading {
+  padding: 16px 16px 0;
+}
+
 .account-button {
   display: inline-grid;
   place-items: center;

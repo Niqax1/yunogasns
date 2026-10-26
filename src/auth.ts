@@ -4,9 +4,18 @@ import { USER_ID_PATTERN } from "./config";
 import { HttpError, checkRateLimit, clientIpKey, json, readJson } from "./http";
 import { mediaUrl } from "./media";
 
-export type CurrentUser = { id: string; name: string; isAdmin: boolean; avatarKey: string | null };
+export type CurrentUser = {
+  id: string;
+  name: string;
+  isAdmin: boolean;
+  avatarKey: string | null;
+  noticesReadId: number; // どのお知らせまで読んだか
+};
 
-export type UserRow = { id: string; name: string; is_admin: number; avatar_key: string | null };
+export type UserRow = { id: string; name: string; is_admin: number; avatar_key: string | null; notices_read_id: number };
+
+// ログイン中のアカウントを調べるときに取る列
+const USER_COLUMNS = "u.id, u.name, u.is_admin, u.avatar_key, u.notices_read_id";
 
 // パスワードのハッシュは PBKDF2-SHA256。無料プランの CPU 時間（1リクエスト10ミリ秒）に収まる回数にしている。
 // パスワードは自動発行のランダムな文字列（約50ビット）なので、この回数でも総当たりは現実的でない。
@@ -48,7 +57,13 @@ async function pbkdf2(password: string, salt: Uint8Array, iterations: number): P
 }
 
 export function toCurrentUser(row: UserRow): CurrentUser {
-  return { id: row.id, name: row.name, isAdmin: row.is_admin === 1, avatarKey: row.avatar_key };
+  return {
+    id: row.id,
+    name: row.name,
+    isAdmin: row.is_admin === 1,
+    avatarKey: row.avatar_key,
+    noticesReadId: row.notices_read_id,
+  };
 }
 
 /** 画面に返すアカウント情報 */
@@ -61,7 +76,7 @@ export async function getCurrentUser(env: Env, request: Request, now: number): P
   const token = readCookie(request, SESSION_COOKIE);
   if (!token) return null;
   const row = await env.DB.prepare(
-    `SELECT u.id, u.name, u.is_admin, u.avatar_key FROM sessions s JOIN users u ON u.id = s.user_id
+    `SELECT ${USER_COLUMNS} FROM sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = ?1 AND s.expires_at > ?2`,
   )
     .bind(await sha256(token), now)
@@ -77,7 +92,7 @@ export async function login(env: Env, request: Request, now: number): Promise<Re
 
   // ID は大文字・小文字を区別せずに探す（users.id は COLLATE NOCASE）
   const row = USER_ID_PATTERN.test(id)
-    ? await env.DB.prepare("SELECT id, name, is_admin, avatar_key, password_hash FROM users WHERE id = ?1")
+    ? await env.DB.prepare(`SELECT ${USER_COLUMNS}, u.password_hash FROM users u WHERE u.id = ?1`)
         .bind(id)
         .first<UserRow & { password_hash: string }>()
     : null;

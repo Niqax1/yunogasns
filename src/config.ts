@@ -5,6 +5,7 @@ export const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export const MAX_NAME_LENGTH = 20;
 export const MAX_BODY_LENGTH = 1000;
 export const MAX_IMAGES_PER_POST = 4;
+export const MAX_NOTICE_TITLE_LENGTH = 50;
 
 export const PAGE_SIZE = 30; // タイムライン・引用一覧で一度に返す件数
 export const NEW_POSTS_LIMIT = 50; // 新着チェックで一度に返す件数

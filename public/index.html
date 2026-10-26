@@ -25,6 +25,7 @@
     <symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M12 19l-7-7 7-7"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
     <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></symbol>
   </svg>
 
   <div class="app">
@@ -39,6 +40,10 @@
       <button type="button" id="theme-button" class="icon-button" aria-label="ダークモードにする">
         <svg class="icon" aria-hidden="true"><use href="#i-moon"/></svg>
       </button>
+      <a href="/notices" id="notice-button" class="icon-button notice-button" data-link aria-label="お知らせ" hidden>
+        <svg class="icon" aria-hidden="true"><use href="#i-bell"/></svg>
+        <span id="notice-badge" class="notice-badge" hidden></span>
+      </a>
       <a href="/settings" id="account-button" class="account-button" data-link aria-label="アカウント設定" hidden></a>
     </header>
 
@@ -65,6 +70,11 @@
       </section>
 
       <section id="timeline-view" aria-label="タイムライン" hidden>
+        <a href="/notices" id="notice-banner" class="notice-banner" data-link hidden>
+          <svg class="icon" aria-hidden="true"><use href="#i-bell"/></svg>
+          <span class="notice-banner-label">お知らせ</span>
+          <span id="notice-banner-title" class="notice-banner-title"></span>
+        </a>
         <button type="button" id="new-posts-pill" class="new-posts-pill" hidden>
           <svg class="icon" aria-hidden="true"><use href="#i-up"/></svg>
           <span id="new-posts-label">新しい投稿</span>
@@ -118,6 +128,11 @@
         </div>
       </section>
 
+      <section id="notices-view" aria-label="お知らせ" hidden>
+        <ol id="notice-list" class="notice-list"></ol>
+        <div id="notices-status" class="list-status"></div>
+      </section>
+
       <section id="settings-view" class="page" aria-label="アカウント設定" hidden>
         <div class="page-section">
           <h2 class="section-title">アイコン</h2>
@@ -152,6 +167,7 @@
         <div class="tabs" role="tablist">
           <button type="button" class="tab" role="tab" id="admin-tab-accounts" aria-controls="admin-accounts" aria-selected="true">アカウント</button>
           <button type="button" class="tab" role="tab" id="admin-tab-posts" aria-controls="admin-posts" aria-selected="false">投稿</button>
+          <button type="button" class="tab" role="tab" id="admin-tab-notices" aria-controls="admin-notices" aria-selected="false">お知らせ</button>
         </div>
 
         <div id="admin-accounts" role="tabpanel" aria-labelledby="admin-tab-accounts">
@@ -179,6 +195,27 @@
             <p class="hint">全員の投稿・コメント・いいねを削除します。元に戻せません。</p>
             <button type="button" id="delete-all" class="button button--danger">すべての投稿を削除</button>
           </div>
+        </div>
+
+        <div id="admin-notices" role="tabpanel" aria-labelledby="admin-tab-notices" hidden>
+          <form id="notice-form" class="page-section" novalidate>
+            <h2 class="section-title">お知らせを送る</h2>
+            <label class="field">
+              <span class="field-label">タイトル（50文字まで）</span>
+              <input id="notice-title" class="text-input" placeholder="例：アップデートのお知らせ">
+            </label>
+            <label class="field">
+              <span class="field-label">本文（なくても送れます）</span>
+              <textarea id="notice-body" class="text-input" rows="5" placeholder="変わったところなど"></textarea>
+            </label>
+            <div class="form-meta">
+              <span>送信すると、全員の画面にお知らせが届きます。</span>
+              <button type="submit" id="notice-submit" class="button button--primary">送信</button>
+            </div>
+          </form>
+          <h2 class="section-title list-heading">送ったお知らせ</h2>
+          <ol id="admin-notice-list" class="notice-list"></ol>
+          <div id="admin-notices-status" class="list-status"></div>
         </div>
       </section>
     </main>

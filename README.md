@@ -14,6 +14,8 @@ Cloudflare Workers・D1（SQLite）・KV だけで動き、無料枠の範囲で
 - **管理画面**（管理者だけ）：
   - アカウントの発行（IDを決めるとパスワードが自動で作られ、その場で表示されます）と削除
   - 投稿の削除（選んでまとめて削除・すべて削除）。タイムラインでも、管理者はだれの投稿でも削除できます
+  - お知らせの送信・削除
+- **お知らせ**：管理者が送ったお知らせは、ヘッダーのベルに未読の数が出て、タイムラインの上にも表示されます。ベルから一覧を開くと既読になります（アカウントごとに記録するので、別の端末でも既読）。お知らせは7日では消えず、管理者が削除するまで残ります
 - **新着の自動表示**：画面を開いているあいだ30秒ごとに確認します
 - **ダーク/ライトモード**：右上のボタンで切り替え。最初は端末の設定に合わせます
 - **7日で自動削除**：7日を過ぎた投稿は、コメント・いいね・写真と一緒に消えます
@@ -30,6 +32,7 @@ public/              画面（HTML / CSS / JavaScript。ビルド不要）
   js/app.js          タイムライン・投稿の詳細・投稿画面・ログイン・画面の切り替え
   js/settings.js     アカウント設定
   js/admin.js        管理画面
+  js/notices.js      お知らせ
   js/images.js       写真の縮小
   js/ui.js ほか      共通の部品
 src/                 サーバー（Cloudflare Workers）
@@ -38,6 +41,7 @@ src/                 サーバー（Cloudflare Workers）
   posts.ts           投稿・コメント・引用・いいね
   account.ts         アカウント名・アイコンの変更
   admin.ts           管理者用の機能
+  notices.ts         お知らせ
   media.ts           写真・アイコン画像の保存と配信
 migrations/          DBのテーブル定義
 scripts/account.mjs  アカウントをコマンドで発行する（最初の管理者・パスワードを忘れたとき用）
@@ -107,7 +111,8 @@ npm run account -- admin --admin --remote
 
 | テーブル | 列 |
 | --- | --- |
-| `users` | `id`（ログインID）, `name`（表示名）, `password_hash`, `is_admin`, `avatar_key`, `created_at` |
+| `users` | `id`（ログインID）, `name`（表示名）, `password_hash`, `is_admin`, `avatar_key`, `created_at`, `notices_read_id`（どのお知らせまで読んだか） |
+| `notices` | `id`, `title`, `body` |
 | `sessions` | `token_hash`, `user_id`, `expires_at` |
 | `posts` | `id`, `user_id`, `name`, `body`, `images`, `quote_id`（引用元）, `comment_count`, `quote_count`, `like_count` |
 | `comments` | `id`, `post_id`, `user_id`, `name`, `body` |

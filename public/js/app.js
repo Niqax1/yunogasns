@@ -4,6 +4,7 @@
 import { initAdmin, showAdmin } from "./admin.js";
 import { api, setUnauthorizedHandler } from "./api.js";
 import { compressImage } from "./images.js";
+import { setUnreadNotices, showNotices } from "./notices.js";
 import { navigate, onRoute } from "./router.js";
 import { canDelete, posts, remember, session } from "./state.js";
 import { initSettings, showSettings } from "./settings.js";
@@ -45,6 +46,7 @@ const ui = {
   viewTitle: $("#view-title"),
   themeButton: $("#theme-button"),
   accountButton: $("#account-button"),
+  noticeButton: $("#notice-button"),
   views: {
     boot: $("#boot-view"),
     login: $("#login-view"),
@@ -52,6 +54,7 @@ const ui = {
     detail: $("#detail-view"),
     settings: $("#settings-view"),
     admin: $("#admin-view"),
+    notices: $("#notices-view"),
   },
   loginForm: $("#login-form"),
   loginId: $("#login-id"),
@@ -139,6 +142,7 @@ const compose = {
 const likesSending = new Set();
 let currentView = null;
 let lastPollAt = 0;
+let noticesCheckedAt = 0;
 let commentSending = false;
 
 // ---- ログイン ----
@@ -152,7 +156,9 @@ async function boot() {
     // 保存領域が使えない環境では何もしない
   }
   try {
-    const { user } = await api("/api/me");
+    const { user, unreadNotices } = await api("/api/me");
+    noticesCheckedAt = Date.now();
+    setUnreadNotices(unreadNotices);
     startSession(user);
   } catch (error) {
     if (error.status !== 401) toast(error.message);
@@ -164,6 +170,17 @@ function startSession(user) {
   session.me = user;
   renderAccountButton();
   route();
+}
+
+/** 未読のお知らせを確認し直す（ベルの数字とタイムラインの案内を更新する） */
+async function refreshNotices() {
+  noticesCheckedAt = Date.now();
+  try {
+    const { unreadNotices } = await api("/api/me");
+    setUnreadNotices(unreadNotices);
+  } catch {
+    // 確認に失敗しても、次の機会にまた確認する
+  }
 }
 
 function showLogin(message = "") {
@@ -190,6 +207,7 @@ async function submitLogin(event) {
     ui.loginPassword.value = "";
     ui.loginError.hidden = true;
     startSession(user);
+    refreshNotices();
   } catch (error) {
     ui.loginError.textContent = error.message;
     ui.loginError.hidden = false;
@@ -217,6 +235,7 @@ function renderAccountButton() {
 function resetContent() {
   posts.clear();
   resetTimeline();
+  setUnreadNotices(null);
   detail.token++;
   Object.assign(detail, { id: null, post: null });
   if (ui.composeDialog.open) ui.composeDialog.close();
@@ -1064,7 +1083,7 @@ function openLightbox(src) {
 
 // ---- 画面の切り替え ----
 
-const VIEW_TITLES = { detail: "投稿", settings: "アカウント設定", admin: "管理画面" };
+const VIEW_TITLES = { detail: "投稿", notices: "お知らせ", settings: "アカウント設定", admin: "管理画面" };
 
 function route(options = {}) {
   if (!session.me) {
@@ -1076,6 +1095,9 @@ function route(options = {}) {
   if (post) {
     setView("detail");
     openDetail(Number(post[1]), options);
+  } else if (path === "/notices") {
+    setView("notices");
+    showNotices();
   } else if (path === "/settings") {
     setView("settings");
     showSettings();
@@ -1099,6 +1121,7 @@ function setView(view) {
   ui.viewTitle.textContent = title ?? "";
   ui.composeButton.hidden = view !== "timeline";
   ui.accountButton.hidden = !session.me || view === "login";
+  ui.noticeButton.hidden = ui.accountButton.hidden;
   document.title = title ? `${title} - ${APP_TITLE}` : APP_TITLE;
 }
 
@@ -1130,9 +1153,13 @@ function goBack() {
 
 // ---- 新着の確認 ----
 
+// お知らせはめったに来ないので、新着の確認よりずっと間隔をあけて確認する
+const NOTICE_CHECK_INTERVAL_MS = 10 * 60_000;
+
 async function poll() {
   if (document.hidden || !session.me) return;
   lastPollAt = Date.now();
+  if (lastPollAt - noticesCheckedAt > NOTICE_CHECK_INTERVAL_MS) refreshNotices();
   try {
     if (currentView === "timeline") await pollTimeline();
     else if (currentView === "detail") await pollComments();

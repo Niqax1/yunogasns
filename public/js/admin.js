@@ -1,11 +1,17 @@
 // 管理画面（管理者だけが開ける）：アカウントの発行・削除と、投稿の削除
 
 import { api } from "./api.js";
+import { renderNotice } from "./notices.js";
 import { session } from "./state.js";
-import { $, authorLabel, avatar, dateTimeFormat, h, spinner, timeEl, toast, userRow } from "./ui.js";
+import { $, MAX_BODY_LENGTH, authorLabel, avatar, dateTimeFormat, h, spinner, timeEl, toast, userRow } from "./ui.js";
 
 // 選んで削除するときに、1回のリクエストで送る投稿の数（サーバー側の上限と同じ）
 const DELETE_CHUNK = 100;
+
+// src/config.ts の MAX_NOTICE_TITLE_LENGTH と同じ値にしておく
+const MAX_NOTICE_TITLE_LENGTH = 50;
+
+const TABS = ["accounts", "posts", "notices"];
 
 const admin = {
   tab: "accounts",
@@ -16,8 +22,12 @@ let callbacks = { onPostsDeleted: () => {} };
 
 export function initAdmin(options) {
   callbacks = options;
-  $("#admin-tab-accounts").addEventListener("click", () => selectTab("accounts"));
-  $("#admin-tab-posts").addEventListener("click", () => selectTab("posts"));
+  for (const tab of TABS) $(`#admin-tab-${tab}`).addEventListener("click", () => selectTab(tab));
+  $("#notice-form").addEventListener("submit", sendNotice);
+  $("#admin-notice-list").addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("[data-delete-notice]") : null;
+    if (button) deleteNotice(Number(button.dataset.deleteNotice));
+  });
   $("#issue-form").addEventListener("submit", issueAccount);
   $("#account-list").addEventListener("click", (event) => {
     const button = event.target instanceof Element ? event.target.closest("[data-delete-user]") : null;
@@ -48,11 +58,12 @@ export function showAdmin() {
 
 function selectTab(tab) {
   admin.tab = tab;
-  $("#admin-tab-accounts").setAttribute("aria-selected", String(tab === "accounts"));
-  $("#admin-tab-posts").setAttribute("aria-selected", String(tab === "posts"));
-  $("#admin-accounts").hidden = tab !== "accounts";
-  $("#admin-posts").hidden = tab !== "posts";
+  for (const name of TABS) {
+    $(`#admin-tab-${name}`).setAttribute("aria-selected", String(name === tab));
+    $(`#admin-${name}`).hidden = name !== tab;
+  }
   if (tab === "posts") loadPosts({ reset: true });
+  if (tab === "notices") loadNotices();
 }
 
 // ---- アカウント ----
@@ -247,6 +258,64 @@ async function deleteAll() {
     toast(`${deleted}件の投稿を削除しました`);
     callbacks.onPostsDeleted();
     loadPosts({ reset: true });
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+// ---- お知らせ ----
+
+async function loadNotices() {
+  const status = $("#admin-notices-status");
+  status.replaceChildren(spinner());
+  try {
+    const { notices } = await api("/api/notices");
+    $("#admin-notice-list").replaceChildren(
+      ...notices.map((notice) =>
+        renderNotice(notice, {
+          extra: h(
+            "button",
+            { type: "button", class: "button button--danger button--small", dataset: { deleteNotice: notice.id } },
+            "削除",
+          ),
+        }),
+      ),
+    );
+    status.replaceChildren(notices.length === 0 ? h("p", {}, "まだお知らせを送っていません") : "");
+  } catch (error) {
+    status.replaceChildren(h("p", {}, error.message));
+  }
+}
+
+async function sendNotice(event) {
+  event.preventDefault();
+  const title = $("#notice-title").value.trim();
+  const body = $("#notice-body").value.trim();
+  if (!title) return toast("タイトルを入力してください。");
+  if ([...title].length > MAX_NOTICE_TITLE_LENGTH) return toast(`タイトルは${MAX_NOTICE_TITLE_LENGTH}文字以内にしてください。`);
+  if ([...body].length > MAX_BODY_LENGTH) return toast(`本文は${MAX_BODY_LENGTH}文字以内にしてください。`);
+  if (!confirm(`「${title}」を全員にお知らせしますか？`)) return;
+  const button = $("#notice-submit");
+  button.disabled = true;
+  try {
+    await api("/api/admin/notices", { method: "POST", body: { title, body } });
+    $("#notice-title").value = "";
+    $("#notice-body").value = "";
+    toast("お知らせを送信しました");
+    loadNotices();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function deleteNotice(id) {
+  if (!confirm("このお知らせを削除しますか？\nみんなのお知らせ一覧からも消えます。")) return;
+  try {
+    await api(`/api/admin/notices/${id}`, { method: "DELETE" });
+    toast("お知らせを削除しました");
+    loadNotices();
   } catch (error) {
     toast(error.message);
   }

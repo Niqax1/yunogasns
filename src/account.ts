@@ -4,9 +4,11 @@ import { type CurrentUser, publicUser } from "./auth";
 import { MAX_NAME_LENGTH } from "./config";
 import { HttpError, cleanText, json, readBody, readJson } from "./http";
 import { MAX_AVATAR_BYTES, deleteImages, storeImage } from "./media";
+import { unreadNotices } from "./notices";
 
-export function getMe(me: CurrentUser): Response {
-  return json({ user: publicUser(me) });
+/** ログイン中の本人の情報と、未読のお知らせ */
+export async function getMe(env: Env, me: CurrentUser): Promise<Response> {
+  return json({ user: publicUser(me), unreadNotices: await unreadNotices(env, me) });
 }
 
 /** 表示名を変える。過去の投稿にも新しい名前が表示される */
