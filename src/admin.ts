@@ -25,6 +25,8 @@ const DELETE_USER_STATEMENTS = [
   "DELETE FROM likes WHERE user_id = ?1 OR post_id IN (SELECT id FROM posts WHERE user_id = ?1)",
   "DELETE FROM comments WHERE user_id = ?1 OR post_id IN (SELECT id FROM posts WHERE user_id = ?1)",
   "DELETE FROM posts WHERE user_id = ?1",
+  "DELETE FROM follows WHERE follower_id = ?1 OR followee_id = ?1",
+  "DELETE FROM push_subscriptions WHERE user_id = ?1",
   "DELETE FROM sessions WHERE user_id = ?1",
   "DELETE FROM users WHERE id = ?1",
 ];

@@ -5,6 +5,8 @@ import { initAdmin, showAdmin } from "./admin.js";
 import { api, setUnauthorizedHandler } from "./api.js";
 import { compressImage } from "./images.js";
 import { setUnreadNotices, showNotices } from "./notices.js";
+import { initProfile, refreshProfileStatus, showProfile } from "./profile.js";
+import { forgetPushSubscription, registerServiceWorker, syncPushSubscription } from "./push.js";
 import { navigate, onRoute } from "./router.js";
 import { canDelete, posts, remember, session } from "./state.js";
 import { initSettings, showSettings } from "./settings.js";
@@ -21,6 +23,7 @@ import {
   icon,
   imageGrid,
   linkify,
+  profileLink,
   refreshTimes,
   spinner,
   textLength,
@@ -55,6 +58,7 @@ const ui = {
     settings: $("#settings-view"),
     admin: $("#admin-view"),
     notices: $("#notices-view"),
+    profile: $("#profile-view"),
   },
   loginForm: $("#login-form"),
   loginId: $("#login-id"),
@@ -170,6 +174,9 @@ function startSession(user) {
   session.me = user;
   renderAccountButton();
   route();
+  // 通知を許可済みの端末なら、このアカウントの通知の受け取り先として登録しておく
+  registerServiceWorker();
+  syncPushSubscription();
 }
 
 /** 未読のお知らせを確認し直す（ベルの数字とタイムラインの案内を更新する） */
@@ -219,6 +226,7 @@ async function submitLogin(event) {
 async function logout() {
   if (!confirm("ログアウトしますか？")) return;
   try {
+    await forgetPushSubscription();
     await api("/api/logout", { method: "POST" });
   } catch {
     // 通信に失敗しても、この端末ではログアウトした状態にする
@@ -228,6 +236,7 @@ async function logout() {
 }
 
 function renderAccountButton() {
+  ui.accountButton.href = `/u/${session.me.id}`;
   ui.accountButton.replaceChildren(avatar(session.me, "header"));
 }
 
@@ -296,14 +305,14 @@ function renderPost(post, { withQuote = true } = {}) {
   return h(
     "article",
     { class: "post", dataset: { id: post.id } },
-    avatar(post.author),
+    profileLink(post.author, "avatar-link", avatar(post.author)),
     h(
       "div",
       { class: "post-main" },
       h(
         "div",
         { class: "post-head" },
-        ...authorLabel(post.author),
+        profileLink(post.author, "profile-link", ...authorLabel(post.author)),
         h("a", { class: "post-time", href: `/p/${post.id}`, dataset: { link: "" } }, timeEl(post.createdAt)),
         canDelete(post) ? deleteButton() : null,
       ),
@@ -424,8 +433,8 @@ function renderDetailPost(post) {
     h(
       "div",
       { class: "detail-head" },
-      avatar(post.author),
-      h("div", { class: "detail-author" }, ...authorLabel(post.author)),
+      profileLink(post.author, "avatar-link", avatar(post.author)),
+      profileLink(post.author, "detail-author", ...authorLabel(post.author)),
       canDelete(post) ? deleteButton() : null,
     ),
     post.body ? h("div", { class: "post-body" }, linkify(post.body)) : null,
@@ -452,11 +461,16 @@ function renderComment(comment) {
   return h(
     "li",
     { class: "comment", dataset: { id: comment.id } },
-    avatar(comment.author),
+    profileLink(comment.author, "avatar-link", avatar(comment.author)),
     h(
       "div",
       { class: "comment-main" },
-      h("div", { class: "post-head" }, ...authorLabel(comment.author), h("span", { class: "post-time" }, timeEl(comment.createdAt))),
+      h(
+        "div",
+        { class: "post-head" },
+        profileLink(comment.author, "profile-link", ...authorLabel(comment.author)),
+        h("span", { class: "post-time" }, timeEl(comment.createdAt)),
+      ),
       h("div", { class: "post-body" }, linkify(comment.body)),
     ),
   );
@@ -893,6 +907,7 @@ function removePost(id) {
   for (const quoting of posts.values()) if (quoting.quoteId === id) quoting.quote = null;
   for (const card of document.querySelectorAll(`.quote-card[data-id="${id}"]`)) card.replaceWith(renderQuoteCard(null));
   renderTimelineStatus();
+  refreshProfileStatus();
 }
 
 // ---- コメントの投稿 ----
@@ -1083,7 +1098,7 @@ function openLightbox(src) {
 
 // ---- 画面の切り替え ----
 
-const VIEW_TITLES = { detail: "投稿", notices: "お知らせ", settings: "アカウント設定", admin: "管理画面" };
+const VIEW_TITLES = { detail: "投稿", profile: "プロフィール", notices: "お知らせ", settings: "アカウント設定", admin: "管理画面" };
 
 function route(options = {}) {
   if (!session.me) {
@@ -1095,6 +1110,9 @@ function route(options = {}) {
   if (post) {
     setView("detail");
     openDetail(Number(post[1]), options);
+  } else if (/^\/u\/[A-Za-z0-9_]{1,20}$/.test(path)) {
+    setView("profile");
+    showProfile(path.slice(3));
   } else if (path === "/notices") {
     setView("notices");
     showNotices();
@@ -1370,6 +1388,12 @@ initSettings({
   },
   onLogout: logout,
 });
+// 通知を押してアプリが前に出てきたら、通知の内容の画面へ移る（sw.js から届く）
+navigator.serviceWorker?.addEventListener("message", (event) => {
+  const path = event.data?.type === "open" ? event.data.path : null;
+  if (typeof path === "string" && path.startsWith("/") && session.me) navigate(path);
+});
+initProfile({ renderPost });
 initAdmin({
   onPostsDeleted: () => {
     posts.clear();

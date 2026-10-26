@@ -3,6 +3,7 @@
 import type { CurrentUser } from "./auth";
 import { MAX_BODY_LENGTH, MAX_NOTICE_TITLE_LENGTH } from "./config";
 import { HttpError, cleanText, json, readJson } from "./http";
+import type { Notifier } from "./notify";
 
 // お知らせの一覧で返す最大件数
 const NOTICES_LIMIT = 50;
@@ -37,7 +38,7 @@ export async function markNoticesRead(env: Env, me: CurrentUser): Promise<Respon
 }
 
 /** 管理者がお知らせを送る（{"title": ..., "body": ...}）。本文は空でもよい */
-export async function createNotice(env: Env, request: Request, me: CurrentUser, now: number): Promise<Response> {
+export async function createNotice(env: Env, request: Request, me: CurrentUser, now: number, notifier: Notifier): Promise<Response> {
   const input = await readJson(request);
   const title = cleanText(input.title, "タイトル", MAX_NOTICE_TITLE_LENGTH, { multiline: false });
   const body = cleanText(input.body, "本文", MAX_BODY_LENGTH, { multiline: true, allowEmpty: true });
@@ -52,6 +53,7 @@ export async function createNotice(env: Env, request: Request, me: CurrentUser, 
   ]);
   const notice = inserted?.results[0];
   if (!notice) throw new Error("INSERT INTO notices returned no row");
+  notifier.notice(me, notice);
   return json({ notice: toNotice(notice) }, 201);
 }
 

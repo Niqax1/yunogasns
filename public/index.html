@@ -7,6 +7,11 @@
   <meta name="description" content="慰隠 由遁のSNS">
   <meta name="theme-color" content="#ffffff">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <!-- ホーム画面に追加したとき、アプリとして開く（iPhone で通知を受け取るのに必要） -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Yunoga SNS">
   <!-- 描画前にテーマを決めて、ライト→ダークのちらつきを防ぐ -->
   <script src="/theme.js"></script>
   <link rel="stylesheet" href="/style.css">
@@ -26,6 +31,7 @@
     <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
     <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
     <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></symbol>
+    <symbol id="i-bell-off" viewBox="0 0 24 24"><path d="M13.7 21a2 2 0 0 1-3.4 0"/><path d="M18.6 13A17.9 17.9 0 0 1 18 8"/><path d="M6.3 6.3A6 6 0 0 0 6 8c0 7-3 9-3 9h14"/><path d="M18 8a6 6 0 0 0-9.3-5"/><path d="M2 2l20 20"/></symbol>
   </svg>
 
   <div class="app">
@@ -44,7 +50,7 @@
         <svg class="icon" aria-hidden="true"><use href="#i-bell"/></svg>
         <span id="notice-badge" class="notice-badge" hidden></span>
       </a>
-      <a href="/settings" id="account-button" class="account-button" data-link aria-label="アカウント設定" hidden></a>
+      <a href="/" id="account-button" class="account-button" data-link aria-label="自分のプロフィール" hidden></a>
     </header>
 
     <main>
@@ -128,6 +134,22 @@
         </div>
       </section>
 
+      <section id="profile-view" aria-label="プロフィール" hidden>
+        <div id="profile-head" class="profile-head"></div>
+        <div id="profile-tabs" class="tabs" role="tablist" hidden>
+          <button type="button" class="tab" role="tab" id="profile-tab-posts" aria-selected="true">投稿</button>
+          <button type="button" class="tab" role="tab" id="profile-tab-following" aria-selected="false">
+            フォロー中 <span class="tab-count" id="profile-following-count">0</span>
+          </button>
+          <button type="button" class="tab" role="tab" id="profile-tab-followers" aria-selected="false">
+            フォロワー <span class="tab-count" id="profile-follower-count">0</span>
+          </button>
+        </div>
+        <div id="profile-posts" class="post-list"></div>
+        <ul id="profile-users" class="user-list" hidden></ul>
+        <div id="profile-status" class="list-status"></div>
+      </section>
+
       <section id="notices-view" aria-label="お知らせ" hidden>
         <ol id="notice-list" class="notice-list"></ol>
         <div id="notices-status" class="list-status"></div>
@@ -154,6 +176,19 @@
           </div>
           <p class="hint">投稿やコメントに表示される名前です。ログインID（<span id="settings-id"></span>）は変わりません。</p>
         </form>
+        <div class="page-section">
+          <h2 class="section-title">通知</h2>
+          <div id="push-status" class="push-status"></div>
+          <fieldset id="notify-settings" class="toggle-list">
+            <legend class="field-label">通知を受け取るできごと</legend>
+            <label class="toggle"><span>自分の投稿にコメントがついたとき</span><input type="checkbox" data-setting="comments"></label>
+            <label class="toggle"><span>自分の投稿が引用されたとき</span><input type="checkbox" data-setting="quotes"></label>
+            <label class="toggle"><span>自分の投稿にいいねされたとき</span><input type="checkbox" data-setting="likes"></label>
+            <label class="toggle"><span>フォローされたとき</span><input type="checkbox" data-setting="follows"></label>
+            <label class="toggle"><span>管理者からのお知らせ</span><input type="checkbox" data-setting="notices"></label>
+          </fieldset>
+          <p class="hint">フォローしている人の新しい投稿の通知は、その人のプロフィールのベルで切り替えられます。</p>
+        </div>
         <div id="settings-admin" class="page-section" hidden>
           <h2 class="section-title">管理</h2>
           <a href="/admin" class="button button--ghost" data-link>管理画面を開く</a>

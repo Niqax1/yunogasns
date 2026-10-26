@@ -64,13 +64,21 @@ export function authorLabel(author) {
   ];
 }
 
-/** アカウントの一覧の1行（いいねした人・管理画面） */
+/**
+ * プロフィールへのリンク（中身は children）。
+ * ログイン導入前の投稿はアカウントがないので、リンクにせず同じ見た目の span にする。
+ */
+export function profileLink(author, className, ...children) {
+  if (!author.id) return h("span", { class: className }, ...children);
+  return h("a", { class: className, href: `/u/${author.id}`, dataset: { link: "" } }, ...children);
+}
+
+/** アカウントの一覧の1行（いいねした人・フォロー・管理画面）。押すとプロフィールを開く */
 export function userRow(user, ...extra) {
   return h(
     "li",
     { class: "user-row", dataset: { id: user.id } },
-    avatar(user),
-    h("div", { class: "user-row-main" }, ...authorLabel(user)),
+    profileLink(user, "user-row-link", avatar(user), h("div", { class: "user-row-main" }, ...authorLabel(user))),
     ...extra,
   );
 }

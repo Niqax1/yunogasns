@@ -3,13 +3,23 @@
  * 画面（HTML/CSS/JS）は public/ の静的アセットとして配信されるので、ここでは扱わない。
  */
 
-import { getMe, removeAvatar, setAvatar, updateMe } from "./account";
+import {
+  deletePushSubscription,
+  getMe,
+  getNotificationSettings,
+  removeAvatar,
+  savePushSubscription,
+  setAvatar,
+  updateMe,
+  updateNotificationSettings,
+} from "./account";
 import { deleteEveryPost, deleteSelectedPosts, deleteUser, issueUser, listUsers } from "./admin";
 import { getCurrentUser, login, logout } from "./auth";
 import { RETENTION_MS } from "./config";
 import { HttpError, assertSameOrigin, json } from "./http";
 import { serveMedia } from "./media";
 import { createNotice, deleteNotice, listNotices, markNoticesRead } from "./notices";
+import { createNotifier } from "./notify";
 import {
   createComment,
   createPost,
@@ -22,6 +32,7 @@ import {
   postNotFound,
   setLike,
 } from "./posts";
+import { follow, getProfile, listFollows, listUserPosts, unfollow } from "./users";
 
 export default {
   async fetch(request, env, ctx) {
@@ -79,6 +90,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   // ここから先は、ログインしている人だけが使える
   const me = await getCurrentUser(env, request, now);
   if (!me) throw new HttpError(401, "ログインしてください。");
+  // 投稿やコメントなどのできごとを、関係する人の端末に通知する（応答を返したあとで送る）
+  const notifier = createNotifier(env, ctx, url.origin);
 
   const media = /^\/media\/([pa]\/[0-9a-f-]{36})$/.exec(pathname);
   if (media?.[1] && method === "GET") return serveMedia(env, media[1]);
@@ -89,6 +102,14 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   }
   if (pathname === "/api/notices" && method === "GET") return listNotices(env, me);
   if (pathname === "/api/notices/read" && method === "POST") return markNoticesRead(env, me);
+  if (pathname === "/api/me/notifications") {
+    if (method === "GET") return getNotificationSettings(env, me);
+    if (method === "PATCH") return updateNotificationSettings(env, request, me);
+  }
+  if (pathname === "/api/push/subscriptions") {
+    if (method === "POST") return savePushSubscription(env, request, me, now);
+    if (method === "DELETE") return deletePushSubscription(env, request, me);
+  }
   if (pathname === "/api/me/avatar") {
     if (method === "PUT") return setAvatar(env, ctx, request, me);
     if (method === "DELETE") return removeAvatar(env, ctx, me);
@@ -96,7 +117,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 
   if (pathname === "/api/posts") {
     if (method === "GET") return listPosts(env, url, me, cutoff);
-    if (method === "POST") return createPost(env, request, me, now, cutoff);
+    if (method === "POST") return createPost(env, request, me, now, cutoff, notifier);
   }
 
   const post = /^\/api\/posts\/(\d{1,15})(?:\/(comments|quotes|like|likes))?$/.exec(pathname);
@@ -108,10 +129,22 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     if (sub === undefined && method === "GET") return getPost(env, me, postId, cutoff);
     if (sub === undefined && method === "DELETE") return deletePost(env, ctx, me, postId);
     if (sub === "comments" && method === "GET") return listComments(env, url, postId);
-    if (sub === "comments" && method === "POST") return createComment(env, request, me, postId, now, cutoff);
+    if (sub === "comments" && method === "POST") return createComment(env, request, me, postId, now, cutoff, notifier);
     if (sub === "quotes" && method === "GET") return listQuotes(env, url, me, postId, cutoff);
-    if (sub === "like" && method === "POST") return setLike(env, request, me, postId, now, cutoff);
+    if (sub === "like" && method === "POST") return setLike(env, request, me, postId, now, cutoff, notifier);
     if (sub === "likes" && method === "GET") return listLikers(env, postId);
+  }
+
+  const profile = /^\/api\/users\/([A-Za-z0-9_]{1,20})(?:\/(posts|following|followers|follow))?$/.exec(pathname);
+  if (profile?.[1]) {
+    const userId = profile[1];
+    const sub = profile[2];
+    if (sub === undefined && method === "GET") return getProfile(env, me, userId);
+    if (sub === "posts" && method === "GET") return listUserPosts(env, url, me, userId, cutoff);
+    if (sub === "following" && method === "GET") return listFollows(env, userId, "following");
+    if (sub === "followers" && method === "GET") return listFollows(env, userId, "followers");
+    if (sub === "follow" && method === "PUT") return follow(env, request, me, userId, now, notifier);
+    if (sub === "follow" && method === "DELETE") return unfollow(env, me, userId);
   }
 
   if (pathname.startsWith("/api/admin/")) {
@@ -122,7 +155,7 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     if (user?.[1] && method === "DELETE") return deleteUser(env, ctx, me, user[1]);
     if (pathname === "/api/admin/posts/delete" && method === "POST") return deleteSelectedPosts(env, ctx, request);
     if (pathname === "/api/admin/posts/delete-all" && method === "POST") return deleteEveryPost(env, ctx, request);
-    if (pathname === "/api/admin/notices" && method === "POST") return createNotice(env, request, me, now);
+    if (pathname === "/api/admin/notices" && method === "POST") return createNotice(env, request, me, now, notifier);
     const notice = /^\/api\/admin\/notices\/(\d{1,15})$/.exec(pathname);
     if (notice?.[1] && method === "DELETE") return deleteNotice(env, Number(notice[1]));
   }

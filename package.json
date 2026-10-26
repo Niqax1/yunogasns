@@ -10,6 +10,7 @@
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
     "account": "node scripts/account.mjs",
+    "vapid-keys": "node scripts/vapid-keys.mjs",
     "typecheck": "wrangler types && tsc"
   },
   "repository": {

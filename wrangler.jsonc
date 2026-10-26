@@ -55,6 +55,12 @@
     "crons": ["0 * * * *"]
   },
 
+  // 通知（Web Push）の送り主を証明する鍵の公開側。秘密側の VAPID_PRIVATE_KEY は、
+  // 手元では .dev.vars に、本番では秘密情報として設定する（README の「通知を使えるようにする」参照）
+  "vars": {
+    "VAPID_PUBLIC_KEY": "BOwEbOEs7oRmmQUxROisjwu6gNDfon7dAuKfcItTXkf4b7R-t1DkBmsqL5E1LiXRnyK4HhXYMQRXpkPhSsnfJUI"
+  },
+
   "observability": {
     "enabled": true
   }

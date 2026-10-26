@@ -20,6 +20,7 @@ import {
   parseStoredImages,
   storeImage,
 } from "./media";
+import type { Notifier } from "./notify";
 
 // 写真4枚と本文が収まる大きさ
 const MAX_POST_REQUEST_BYTES = MAX_IMAGES_PER_POST * MAX_IMAGE_BYTES + 64 * 1024;
@@ -33,7 +34,7 @@ const TOO_MANY_WRITES = "短い時間に送信しすぎです。1分ほど待っ
 // 投稿の取得に共通する部分。?1 は「これより古いものは期限切れ」とする時刻、?2 は見ている人のID。
 // 名前とアイコンはアカウントから取る（ログイン導入前の投稿はアカウントがないので、投稿時の名前 p.name を使う）。
 // 引用元も同じテーブルから結合して取り、期限切れ・削除済みなら q_* が NULL になる。
-const SELECT_POSTS = `
+export const SELECT_POSTS = `
   SELECT p.id, p.body, p.images, p.quote_id, p.comment_count, p.quote_count, p.like_count,
          p.user_id, COALESCE(u.name, p.name) AS name, u.avatar_key,
          l.post_id IS NOT NULL AS liked,
@@ -60,7 +61,7 @@ const NEXT_COMMENT_ID = "MAX(?1, COALESCE((SELECT MAX(id) FROM comments), 0) + 1
 // 消す投稿の id の一覧は、JSON 配列1つで渡す（D1 は1つのクエリに渡せる値が100個まで）
 const IDS_IN_JSON = "(SELECT value FROM json_each(?1))";
 
-type PostRow = {
+export type PostRow = {
   id: number;
   body: string;
   images: string | null;
@@ -157,7 +158,14 @@ export async function listLikers(env: Env, postId: number): Promise<Response> {
 }
 
 /** 投稿する。写真つきでも送れるよう multipart/form-data で受け取る */
-export async function createPost(env: Env, request: Request, me: CurrentUser, now: number, cutoff: number): Promise<Response> {
+export async function createPost(
+  env: Env,
+  request: Request,
+  me: CurrentUser,
+  now: number,
+  cutoff: number,
+  notifier: Notifier,
+): Promise<Response> {
   await checkRateLimit(env.WRITE_LIMITER, me.id, TOO_MANY_WRITES);
   const form = await readForm(request, MAX_POST_REQUEST_BYTES);
   const files = form.getAll("images").filter((value): value is File => typeof value !== "string");
@@ -222,6 +230,7 @@ export async function createPost(env: Env, request: Request, me: CurrentUser, no
     q_name: quoted?.name ?? null,
     q_avatar_key: quoted?.avatar_key ?? null,
   });
+  notifier.newPost(me, { id: post.id, body, hasImages: images.length > 0, quoteId });
   return json({ post }, 201);
 }
 
@@ -279,6 +288,7 @@ export async function createComment(
   postId: number,
   now: number,
   cutoff: number,
+  notifier: Notifier,
 ): Promise<Response> {
   await checkRateLimit(env.WRITE_LIMITER, me.id, TOO_MANY_WRITES);
   const input = await readJson(request);
@@ -297,6 +307,7 @@ export async function createComment(
   const inserted = result?.results[0];
   if (!inserted) throw postNotFound();
   const comment = toComment({ id: inserted.id, post_id: postId, body, user_id: me.id, name: me.name, avatar_key: me.avatarKey });
+  notifier.comment(me, postId, body);
   return json({ comment }, 201);
 }
 
@@ -308,6 +319,7 @@ export async function setLike(
   postId: number,
   now: number,
   cutoff: number,
+  notifier: Notifier,
 ): Promise<Response> {
   await checkRateLimit(env.LIKE_LIMITER, me.id, TOO_MANY_WRITES);
   const input = await readJson(request);
@@ -319,7 +331,7 @@ export async function setLike(
          SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM posts WHERE id = ?1 AND id >= ?4)`,
       ).bind(postId, me.id, now, cutoff)
     : env.DB.prepare("DELETE FROM likes WHERE post_id = ?1 AND user_id = ?2").bind(postId, me.id);
-  const [, counted] = await env.DB.batch<{ like_count: number }>([
+  const [changed, counted] = await env.DB.batch<{ like_count: number }>([
     change,
     // 件数は likes から数え直す（同じ操作が二重に届いても、数がずれないように）
     env.DB.prepare(
@@ -328,6 +340,8 @@ export async function setLike(
   ]);
   const row = counted?.results[0];
   if (!row) throw postNotFound();
+  // 新しくいいねしたときだけ通知する（すでにいいね済みの投稿への二重の送信では送らない）
+  if (input.liked && changed?.meta.changes === 1) notifier.like(me, postId);
   return json({ likeCount: row.like_count, liked: input.liked });
 }
 
@@ -343,7 +357,7 @@ function toImages(json: string | null) {
   return parseStoredImages(json).map((image) => ({ url: mediaUrl(image.k), width: image.w, height: image.h }));
 }
 
-function toPost(row: PostRow) {
+export function toPost(row: PostRow) {
   return {
     id: row.id,
     createdAt: row.id,
