@@ -556,6 +556,21 @@ a.post-time:hover {
   align-items: center;
 }
 
+/* 引用元がコメントのときの見出し */
+.quote-kind {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+  color: var(--text-sub);
+  font-size: 12px;
+}
+
+.quote-kind .icon {
+  width: 14px;
+  height: 14px;
+}
+
 .quote-body {
   display: -webkit-box;
   margin-top: 4px;
@@ -749,6 +764,10 @@ a.post-time:hover {
 
 .comment.is-new {
   animation: highlight 2.4s ease-out;
+}
+
+.comment .post-actions {
+  margin-top: 2px;
 }
 
 .empty-note {

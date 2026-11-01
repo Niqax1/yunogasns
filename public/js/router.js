@@ -6,7 +6,8 @@ export function onRoute(handler) {
   routeHandler = handler;
 }
 
+// path には、コメントの位置を表す #c-<コメントid> が付くこともある
 export function navigate(path, options = {}) {
-  if (path !== location.pathname) history.pushState({ inApp: true }, "", path);
+  if (path !== location.pathname + location.hash) history.pushState({ inApp: true }, "", path);
   routeHandler(options);
 }

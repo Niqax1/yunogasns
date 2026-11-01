@@ -1,4 +1,4 @@
-/** 投稿・コメント・引用・いいね */
+/** 投稿・コメント・引用・いいね（コメントへのいいね・コメントの引用も含む） */
 
 import type { CurrentUser } from "./auth";
 import {
@@ -34,25 +34,38 @@ const TOO_MANY_WRITES = "短い時間に送信しすぎです。1分ほど待っ
 // 投稿の取得に共通する部分。?1 は「これより古いものは期限切れ」とする時刻、?2 は見ている人のID。
 // 名前とアイコンはアカウントから取る（ログイン導入前の投稿はアカウントがないので、投稿時の名前 p.name を使う）。
 // 引用元も同じテーブルから結合して取り、期限切れ・削除済みなら q_* が NULL になる。
+// コメントの引用元は qc_* に入る（コメントは付いている投稿と一緒に期限切れになる）。
 export const SELECT_POSTS = `
-  SELECT p.id, p.body, p.images, p.quote_id, p.comment_count, p.quote_count, p.like_count,
+  SELECT p.id, p.body, p.images, p.quote_id, p.quote_comment_id, p.comment_count, p.quote_count, p.like_count,
          p.user_id, COALESCE(u.name, p.name) AS name, u.avatar_key,
          l.post_id IS NOT NULL AS liked,
          q.id AS q_id, q.body AS q_body, q.images AS q_images,
-         q.user_id AS q_user_id, COALESCE(qu.name, q.name) AS q_name, qu.avatar_key AS q_avatar_key
+         q.user_id AS q_user_id, COALESCE(qu.name, q.name) AS q_name, qu.avatar_key AS q_avatar_key,
+         qc.id AS qc_id, qc.post_id AS qc_post_id, qc.body AS qc_body,
+         qc.user_id AS qc_user_id, COALESCE(qcu.name, qc.name) AS qc_name, qcu.avatar_key AS qc_avatar_key
   FROM posts p
   LEFT JOIN users u ON u.id = p.user_id
   LEFT JOIN likes l ON l.post_id = p.id AND l.user_id = ?2
   LEFT JOIN posts q ON q.id = p.quote_id AND q.id >= ?1
-  LEFT JOIN users qu ON qu.id = q.user_id`;
+  LEFT JOIN users qu ON qu.id = q.user_id
+  LEFT JOIN comments qc ON qc.id = p.quote_comment_id AND qc.post_id >= ?1
+  LEFT JOIN users qcu ON qcu.id = qc.user_id`;
 
+// ?4 は見ている人のID（いいね済みかどうか）
 const SELECT_COMMENTS = `
-  SELECT c.id, c.post_id, c.body, c.user_id, COALESCE(u.name, c.name) AS name, u.avatar_key
+  SELECT c.id, c.post_id, c.body, c.like_count, c.quote_count, c.user_id, COALESCE(u.name, c.name) AS name, u.avatar_key,
+         cl.comment_id IS NOT NULL AS liked
   FROM comments c
   LEFT JOIN users u ON u.id = c.user_id
+  LEFT JOIN comment_likes cl ON cl.comment_id = c.id AND cl.user_id = ?4
   WHERE c.post_id = ?1 AND c.id > ?2
   ORDER BY c.id
   LIMIT ?3`;
+
+// 引用するコメント1件。?1 はコメントの id、?2 は期限切れの境目の時刻
+const SELECT_QUOTED_COMMENT = `
+  SELECT c.id, c.post_id, c.body, c.user_id, COALESCE(u.name, c.name) AS name, u.avatar_key
+  FROM comments c LEFT JOIN users u ON u.id = c.user_id WHERE c.id = ?1 AND c.post_id >= ?2`;
 
 // id は「作成時刻（ミリ秒）と、既存の最大id+1 の大きいほう」にする（migrations/0001_init.sql 参照）
 const NEXT_POST_ID = "MAX(?1, COALESCE((SELECT MAX(id) FROM posts), 0) + 1)";
@@ -66,6 +79,7 @@ export type PostRow = {
   body: string;
   images: string | null;
   quote_id: number | null;
+  quote_comment_id: number | null;
   comment_count: number;
   quote_count: number;
   like_count: number;
@@ -79,17 +93,28 @@ export type PostRow = {
   q_user_id: string | null;
   q_name: string | null;
   q_avatar_key: string | null;
+  qc_id: number | null;
+  qc_post_id: number | null;
+  qc_body: string | null;
+  qc_user_id: string | null;
+  qc_name: string | null;
+  qc_avatar_key: string | null;
 };
 
 type QuotedRow = { id: number; body: string; images: string | null; user_id: string | null; name: string; avatar_key: string | null };
+
+type QuotedCommentRow = { id: number; post_id: number; body: string; user_id: string | null; name: string; avatar_key: string | null };
 
 type CommentRow = {
   id: number;
   post_id: number;
   body: string;
+  like_count: number;
+  quote_count: number;
   user_id: string | null;
   name: string;
   avatar_key: string | null;
+  liked: number;
 };
 
 /** タイムライン。?before=<id> でそれより古いページ、?after=<id> で新着を返す（どちらも新しい順） */
@@ -119,7 +144,7 @@ export async function listPosts(env: Env, url: URL, me: CurrentUser, cutoff: num
 export async function getPost(env: Env, me: CurrentUser, postId: number, cutoff: number): Promise<Response> {
   const [post, comments] = await Promise.all([
     env.DB.prepare(`${SELECT_POSTS} WHERE p.id = ?3`).bind(cutoff, me.id, postId).first<PostRow>(),
-    env.DB.prepare(SELECT_COMMENTS).bind(postId, 0, COMMENTS_PAGE_SIZE + 1).all<CommentRow>(),
+    env.DB.prepare(SELECT_COMMENTS).bind(postId, 0, COMMENTS_PAGE_SIZE + 1, me.id).all<CommentRow>(),
   ]);
   if (!post) throw postNotFound();
   const page = pageOf(comments.results, COMMENTS_PAGE_SIZE);
@@ -127,9 +152,9 @@ export async function getPost(env: Env, me: CurrentUser, postId: number, cutoff:
 }
 
 /** コメントの続き（?after=<コメントid> より新しいもの、古い順） */
-export async function listComments(env: Env, url: URL, postId: number): Promise<Response> {
+export async function listComments(env: Env, url: URL, me: CurrentUser, postId: number): Promise<Response> {
   const after = readIdParam(url, "after") ?? 0;
-  const { results } = await env.DB.prepare(SELECT_COMMENTS).bind(postId, after, COMMENTS_PAGE_SIZE + 1).all<CommentRow>();
+  const { results } = await env.DB.prepare(SELECT_COMMENTS).bind(postId, after, COMMENTS_PAGE_SIZE + 1, me.id).all<CommentRow>();
   const page = pageOf(results, COMMENTS_PAGE_SIZE);
   return json({ comments: page.items.map(toComment), hasMore: page.hasMore });
 }
@@ -172,7 +197,10 @@ export async function createPost(
   if (files.length > MAX_IMAGES_PER_POST) throw new HttpError(400, `写真は${MAX_IMAGES_PER_POST}枚までです。`);
   const sizes = parseImageSizes(form.get("imageSizes"), files.length);
   const body = cleanText(form.get("body"), "本文", MAX_BODY_LENGTH, { multiline: true, allowEmpty: files.length > 0 });
+  // 引用できるのは、投稿（quoteId）かコメント（quoteCommentId）のどちらか1つ
   const quoteId = parseOptionalId(form.get("quoteId"));
+  const quoteCommentId = parseOptionalId(form.get("quoteCommentId"));
+  if (quoteId !== null && quoteCommentId !== null) throw new HttpError(400, "引用元の指定が正しくありません。");
 
   let quoted: QuotedRow | null = null;
   if (quoteId !== null) {
@@ -184,6 +212,11 @@ export async function createPost(
       .first<QuotedRow>();
     if (!quoted) throw new HttpError(404, "引用元の投稿が見つかりません。削除された可能性があります。");
   }
+  let quotedComment: QuotedCommentRow | null = null;
+  if (quoteCommentId !== null) {
+    quotedComment = await env.DB.prepare(SELECT_QUOTED_COMMENT).bind(quoteCommentId, cutoff).first<QuotedCommentRow>();
+    if (!quotedComment) throw new HttpError(404, "引用元のコメントが見つかりません。削除された可能性があります。");
+  }
 
   // 写真を先に保存する（このあと投稿の保存に失敗しても、写真は期限が来れば自動で消える）
   const contents = await Promise.all(files.map(async (file) => new Uint8Array(await file.arrayBuffer())));
@@ -194,19 +227,23 @@ export async function createPost(
   const imagesJson = images.length > 0 ? JSON.stringify(images) : null;
 
   const insert = env.DB.prepare(
-    `INSERT INTO posts (id, user_id, name, body, quote_id, images) VALUES (${NEXT_POST_ID}, ?2, ?3, ?4, ?5, ?6)
+    `INSERT INTO posts (id, user_id, name, body, quote_id, quote_comment_id, images)
+     VALUES (${NEXT_POST_ID}, ?2, ?3, ?4, ?5, ?6, ?7)
      RETURNING id`,
-  ).bind(now, me.id, me.name, body, quoteId, imagesJson);
+  ).bind(now, me.id, me.name, body, quoteId, quoteCommentId, imagesJson);
+  const countQuote =
+    quoteId !== null
+      ? env.DB.prepare("UPDATE posts SET quote_count = quote_count + 1 WHERE id = ?1").bind(quoteId)
+      : quoteCommentId !== null
+        ? env.DB.prepare("UPDATE comments SET quote_count = quote_count + 1 WHERE id = ?1").bind(quoteCommentId)
+        : null;
 
   let inserted: { id: number } | null | undefined;
-  if (quoteId === null) {
+  if (countQuote === null) {
     inserted = await insert.first<{ id: number }>();
   } else {
     // 投稿の追加と引用元の引用数の更新は、1つのトランザクションで行う
-    const [result] = await env.DB.batch<{ id: number }>([
-      insert,
-      env.DB.prepare("UPDATE posts SET quote_count = quote_count + 1 WHERE id = ?1").bind(quoteId),
-    ]);
+    const [result] = await env.DB.batch<{ id: number }>([insert, countQuote]);
     inserted = result?.results[0];
   }
   if (!inserted) throw new Error("INSERT INTO posts returned no row");
@@ -216,6 +253,7 @@ export async function createPost(
     body,
     images: imagesJson,
     quote_id: quoteId,
+    quote_comment_id: quoteCommentId,
     comment_count: 0,
     quote_count: 0,
     like_count: 0,
@@ -229,8 +267,14 @@ export async function createPost(
     q_user_id: quoted?.user_id ?? null,
     q_name: quoted?.name ?? null,
     q_avatar_key: quoted?.avatar_key ?? null,
+    qc_id: quotedComment?.id ?? null,
+    qc_post_id: quotedComment?.post_id ?? null,
+    qc_body: quotedComment?.body ?? null,
+    qc_user_id: quotedComment?.user_id ?? null,
+    qc_name: quotedComment?.name ?? null,
+    qc_avatar_key: quotedComment?.avatar_key ?? null,
   });
-  notifier.newPost(me, { id: post.id, body, hasImages: images.length > 0, quoteId });
+  notifier.newPost(me, { id: post.id, body, hasImages: images.length > 0, quoteId, quoteCommentId });
   return json({ post }, 201);
 }
 
@@ -242,20 +286,28 @@ export async function deletePost(env: Env, ctx: ExecutionContext, me: CurrentUse
   return json({ deleted: await deletePosts(env, ctx, [postId]) });
 }
 
-/** 投稿をまとめて削除する。付いていたコメント・いいね・写真も消し、引用元の引用数を減らす */
+/** 投稿をまとめて削除する。付いていたコメント・いいね・写真も消し、引用元（投稿・コメント）の引用数を減らす */
 export async function deletePosts(env: Env, ctx: ExecutionContext, ids: number[]): Promise<number> {
   if (ids.length === 0) return 0;
   const idList = JSON.stringify(ids);
   const { results } = await env.DB.prepare(`SELECT images FROM posts WHERE id IN ${IDS_IN_JSON} AND images IS NOT NULL`)
     .bind(idList)
     .all<{ images: string }>();
-  const [, , , deleted] = await env.DB.batch([
+  const [, , , , , deleted] = await env.DB.batch([
     env.DB.prepare(
       `UPDATE posts SET quote_count = MAX(0, quote_count - (
          SELECT COUNT(*) FROM posts d WHERE d.quote_id = posts.id AND d.id IN ${IDS_IN_JSON}))
        WHERE id IN (SELECT quote_id FROM posts WHERE id IN ${IDS_IN_JSON})`,
     ).bind(idList),
+    env.DB.prepare(
+      `UPDATE comments SET quote_count = MAX(0, quote_count - (
+         SELECT COUNT(*) FROM posts d WHERE d.quote_comment_id = comments.id AND d.id IN ${IDS_IN_JSON}))
+       WHERE id IN (SELECT quote_comment_id FROM posts WHERE id IN ${IDS_IN_JSON})`,
+    ).bind(idList),
     env.DB.prepare(`DELETE FROM likes WHERE post_id IN ${IDS_IN_JSON}`).bind(idList),
+    env.DB.prepare(
+      `DELETE FROM comment_likes WHERE comment_id IN (SELECT id FROM comments WHERE post_id IN ${IDS_IN_JSON})`,
+    ).bind(idList),
     env.DB.prepare(`DELETE FROM comments WHERE post_id IN ${IDS_IN_JSON}`).bind(idList),
     env.DB.prepare(`DELETE FROM posts WHERE id IN ${IDS_IN_JSON}`).bind(idList),
   ]);
@@ -266,8 +318,9 @@ export async function deletePosts(env: Env, ctx: ExecutionContext, ids: number[]
 /** すべての投稿・コメント・いいねを削除する */
 export async function deleteAllPosts(env: Env, ctx: ExecutionContext): Promise<number> {
   const { results } = await env.DB.prepare("SELECT images FROM posts WHERE images IS NOT NULL").all<{ images: string }>();
-  const [, , deleted] = await env.DB.batch([
+  const [, , , deleted] = await env.DB.batch([
     env.DB.prepare("DELETE FROM likes"),
+    env.DB.prepare("DELETE FROM comment_likes"),
     env.DB.prepare("DELETE FROM comments"),
     env.DB.prepare("DELETE FROM posts"),
   ]);
@@ -306,8 +359,18 @@ export async function createComment(
   ]);
   const inserted = result?.results[0];
   if (!inserted) throw postNotFound();
-  const comment = toComment({ id: inserted.id, post_id: postId, body, user_id: me.id, name: me.name, avatar_key: me.avatarKey });
-  notifier.comment(me, postId, body);
+  const comment = toComment({
+    id: inserted.id,
+    post_id: postId,
+    body,
+    like_count: 0,
+    quote_count: 0,
+    user_id: me.id,
+    name: me.name,
+    avatar_key: me.avatarKey,
+    liked: 0,
+  });
+  notifier.comment(me, postId, comment.id, body);
   return json({ comment }, 201);
 }
 
@@ -321,11 +384,8 @@ export async function setLike(
   cutoff: number,
   notifier: Notifier,
 ): Promise<Response> {
-  await checkRateLimit(env.LIKE_LIMITER, me.id, TOO_MANY_WRITES);
-  const input = await readJson(request);
-  if (typeof input.liked !== "boolean") throw new HttpError(400, "送信内容が正しくありません。");
-
-  const change = input.liked
+  const liked = await readLikeRequest(env, request, me);
+  const change = liked
     ? env.DB.prepare(
         `INSERT OR IGNORE INTO likes (post_id, user_id, created_at)
          SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM posts WHERE id = ?1 AND id >= ?4)`,
@@ -341,12 +401,55 @@ export async function setLike(
   const row = counted?.results[0];
   if (!row) throw postNotFound();
   // 新しくいいねしたときだけ通知する（すでにいいね済みの投稿への二重の送信では送らない）
-  if (input.liked && changed?.meta.changes === 1) notifier.like(me, postId);
-  return json({ likeCount: row.like_count, liked: input.liked });
+  if (liked && changed?.meta.changes === 1) notifier.like(me, postId);
+  return json({ likeCount: row.like_count, liked });
+}
+
+/** コメントへのいいねと、その取り消し（送る内容は投稿へのいいねと同じ） */
+export async function setCommentLike(
+  env: Env,
+  request: Request,
+  me: CurrentUser,
+  commentId: number,
+  now: number,
+  cutoff: number,
+  notifier: Notifier,
+): Promise<Response> {
+  const liked = await readLikeRequest(env, request, me);
+  // コメントは付いている投稿と一緒に期限切れになる（post_id が投稿の作成時刻）
+  const change = liked
+    ? env.DB.prepare(
+        `INSERT OR IGNORE INTO comment_likes (comment_id, user_id, created_at)
+         SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM comments WHERE id = ?1 AND post_id >= ?4)`,
+      ).bind(commentId, me.id, now, cutoff)
+    : env.DB.prepare("DELETE FROM comment_likes WHERE comment_id = ?1 AND user_id = ?2").bind(commentId, me.id);
+  const [changed, counted] = await env.DB.batch<{ like_count: number }>([
+    change,
+    env.DB.prepare(
+      `UPDATE comments SET like_count = (SELECT COUNT(*) FROM comment_likes WHERE comment_id = ?1)
+       WHERE id = ?1 AND post_id >= ?2 RETURNING like_count`,
+    ).bind(commentId, cutoff),
+  ]);
+  const row = counted?.results[0];
+  if (!row) throw commentNotFound();
+  if (liked && changed?.meta.changes === 1) notifier.commentLike(me, commentId);
+  return json({ likeCount: row.like_count, liked });
+}
+
+/** いいねの送信内容（{"liked": true|false}）を読む。いいねとフォローは合わせて1分あたりの回数を制限している */
+async function readLikeRequest(env: Env, request: Request, me: CurrentUser): Promise<boolean> {
+  await checkRateLimit(env.LIKE_LIMITER, me.id, TOO_MANY_WRITES);
+  const input = await readJson(request);
+  if (typeof input.liked !== "boolean") throw new HttpError(400, "送信内容が正しくありません。");
+  return input.liked;
 }
 
 export function postNotFound(): HttpError {
   return new HttpError(404, "この投稿は見つかりません。削除されたか、7日が過ぎて消えた可能性があります。");
+}
+
+function commentNotFound(): HttpError {
+  return new HttpError(404, "このコメントは見つかりません。削除されたか、7日が過ぎて消えた可能性があります。");
 }
 
 function toAuthor(id: string | null, name: string, avatarKey: string | null) {
@@ -380,11 +483,32 @@ export function toPost(row: PostRow) {
             images: toImages(row.q_images),
           }
         : null,
+    // コメントを引用した投稿も同じで、引用元のコメントが消えていれば quoteComment は null になる
+    quoteCommentId: row.quote_comment_id,
+    quoteComment:
+      row.qc_id !== null && row.qc_post_id !== null && row.qc_name !== null && row.qc_body !== null
+        ? {
+            id: row.qc_id,
+            postId: row.qc_post_id,
+            createdAt: row.qc_id,
+            author: toAuthor(row.qc_user_id, row.qc_name, row.qc_avatar_key),
+            body: row.qc_body,
+          }
+        : null,
   };
 }
 
 function toComment(row: CommentRow) {
-  return { id: row.id, postId: row.post_id, createdAt: row.id, author: toAuthor(row.user_id, row.name, row.avatar_key), body: row.body };
+  return {
+    id: row.id,
+    postId: row.post_id,
+    createdAt: row.id,
+    author: toAuthor(row.user_id, row.name, row.avatar_key),
+    body: row.body,
+    quoteCount: row.quote_count,
+    likeCount: row.like_count,
+    liked: row.liked === 1,
+  };
 }
 
 function parseOptionalId(value: File | string | null): number | null {

@@ -13,16 +13,22 @@ type AdminUserRow = { id: string; name: string; is_admin: number; avatar_key: st
 
 // アカウントを消すときの処理。?1 はそのアカウントのID
 const DELETE_USER_STATEMENTS = [
-  // この人が付けたいいね・コメント・引用の分だけ、ほかの人の投稿の件数を減らす
+  // この人が付けたいいね・コメント・引用の分だけ、ほかの人の投稿・コメントの件数を減らす
   "UPDATE posts SET like_count = MAX(0, like_count - 1) WHERE id IN (SELECT post_id FROM likes WHERE user_id = ?1)",
+  "UPDATE comments SET like_count = MAX(0, like_count - 1) WHERE id IN (SELECT comment_id FROM comment_likes WHERE user_id = ?1)",
   `UPDATE posts SET comment_count = MAX(0, comment_count - (
      SELECT COUNT(*) FROM comments c WHERE c.post_id = posts.id AND c.user_id = ?1))
    WHERE id IN (SELECT post_id FROM comments WHERE user_id = ?1)`,
   `UPDATE posts SET quote_count = MAX(0, quote_count - (
      SELECT COUNT(*) FROM posts q WHERE q.quote_id = posts.id AND q.user_id = ?1))
    WHERE id IN (SELECT quote_id FROM posts WHERE user_id = ?1 AND quote_id IS NOT NULL)`,
+  `UPDATE comments SET quote_count = MAX(0, quote_count - (
+     SELECT COUNT(*) FROM posts q WHERE q.quote_comment_id = comments.id AND q.user_id = ?1))
+   WHERE id IN (SELECT quote_comment_id FROM posts WHERE user_id = ?1 AND quote_comment_id IS NOT NULL)`,
   // この人の投稿に付いていたいいね・コメントと、この人のいいね・コメント・投稿・ログイン中の端末・アカウントを消す
   "DELETE FROM likes WHERE user_id = ?1 OR post_id IN (SELECT id FROM posts WHERE user_id = ?1)",
+  `DELETE FROM comment_likes WHERE user_id = ?1 OR comment_id IN (
+     SELECT id FROM comments WHERE user_id = ?1 OR post_id IN (SELECT id FROM posts WHERE user_id = ?1))`,
   "DELETE FROM comments WHERE user_id = ?1 OR post_id IN (SELECT id FROM posts WHERE user_id = ?1)",
   "DELETE FROM posts WHERE user_id = ?1",
   "DELETE FROM follows WHERE follower_id = ?1 OR followee_id = ?1",

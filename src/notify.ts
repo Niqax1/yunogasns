@@ -30,10 +30,21 @@ export function createNotifier(env: Env, ctx: ExecutionContext, origin: string) 
     )
       .bind(postId, me.id)
       .first<{ id: string; body: string; images: string | null }>();
+  // コメントを書いた人について、同じく
+  const commentAuthor = (column: "notify_quotes" | "notify_likes", commentId: number, me: CurrentUser) =>
+    env.DB.prepare(
+      `SELECT u.id, c.post_id, c.body FROM comments c JOIN users u ON u.id = c.user_id
+       WHERE c.id = ?1 AND u.${column} = 1 AND u.id != ?2`,
+    )
+      .bind(commentId, me.id)
+      .first<{ id: string; post_id: number; body: string }>();
 
   return {
-    /** 新しい投稿：フォローしていて通知をオンにしている人と、引用された投稿の投稿者 */
-    newPost(me: CurrentUser, post: { id: number; body: string; hasImages: boolean; quoteId: number | null }) {
+    /** 新しい投稿：フォローしていて通知をオンにしている人と、引用された投稿・コメントを書いた人 */
+    newPost(
+      me: CurrentUser,
+      post: { id: number; body: string; hasImages: boolean; quoteId: number | null; quoteCommentId: number | null },
+    ) {
       later("post", async () => {
         const preview = summary(post.body, post.hasImages);
         let quotedAuthor: string | null = null;
@@ -42,6 +53,13 @@ export function createNotifier(env: Env, ctx: ExecutionContext, origin: string) 
           if (author) {
             quotedAuthor = author.id;
             await send([author.id], { title: `${me.name}さんがあなたの投稿を引用しました`, body: preview, url: `/p/${post.id}` });
+          }
+        }
+        if (post.quoteCommentId !== null) {
+          const author = await commentAuthor("notify_quotes", post.quoteCommentId, me);
+          if (author) {
+            quotedAuthor = author.id;
+            await send([author.id], { title: `${me.name}さんがあなたのコメントを引用しました`, body: preview, url: `/p/${post.id}` });
           }
         }
         const { results } = await env.DB.prepare("SELECT follower_id FROM follows WHERE followee_id = ?1 AND notify = 1")
@@ -53,11 +71,13 @@ export function createNotifier(env: Env, ctx: ExecutionContext, origin: string) 
       });
     },
 
-    /** 自分の投稿にコメントがついた */
-    comment(me: CurrentUser, postId: number, body: string) {
+    /** 自分の投稿にコメントがついた（押すと、そのコメントの位置で投稿を開く） */
+    comment(me: CurrentUser, postId: number, commentId: number, body: string) {
       later("comment", async () => {
         const author = await postAuthor("notify_comments", postId, me);
-        if (author) await send([author.id], { title: `${me.name}さんがコメントしました`, body: summary(body, false), url: `/p/${postId}` });
+        if (author) {
+          await send([author.id], { title: `${me.name}さんがコメントしました`, body: summary(body, false), url: commentPath(postId, commentId) });
+        }
       });
     },
 
@@ -71,6 +91,21 @@ export function createNotifier(env: Env, ctx: ExecutionContext, origin: string) 
             body: summary(author.body, author.images !== null),
             url: `/p/${postId}`,
             tag: `like-${postId}`,
+          });
+        }
+      });
+    },
+
+    /** 自分のコメントにいいねされた（投稿へのいいねと同じ設定で、同じコメントへの通知は1つにまとめる） */
+    commentLike(me: CurrentUser, commentId: number) {
+      later("comment-like", async () => {
+        const author = await commentAuthor("notify_likes", commentId, me);
+        if (author) {
+          await send([author.id], {
+            title: `${me.name}さんがあなたのコメントにいいねしました`,
+            body: summary(author.body, false),
+            url: commentPath(author.post_id, commentId),
+            tag: `comment-like-${commentId}`,
           });
         }
       });
@@ -99,6 +134,11 @@ export function createNotifier(env: Env, ctx: ExecutionContext, origin: string) 
       });
     },
   };
+}
+
+/** コメントの位置で投稿を開くURL（public/js/app.js の revealLinkedComment が読む） */
+function commentPath(postId: number, commentId: number): string {
+  return `/p/${postId}#c-${commentId}`;
 }
 
 /** 通知に出す本文の抜粋 */

@@ -129,7 +129,7 @@ const detail = {
   post: null,
   token: 0, // 別の投稿を開いたら、前の投稿へのリクエスト結果を捨てるための番号
   tab: "comments",
-  commentIds: new Set(),
+  comments: new Map(), // 表示中のコメント（id → コメント）
   lastCommentId: 0,
   hasMoreComments: false,
   quotes: null,
@@ -137,13 +137,15 @@ const detail = {
 };
 
 const compose = {
-  quote: null,
+  quote: null, // 引用する投稿
+  quoteComment: null, // 引用するコメント（quote とどちらか一方）
   images: [], // { blob, width, height, url }
   processing: 0, // 縮小中の写真の枚数
   sending: false,
 };
 
 const likesSending = new Set();
+const commentLikesSending = new Set();
 let currentView = null;
 let lastPollAt = 0;
 let noticesCheckedAt = 0;
@@ -318,7 +320,7 @@ function renderPost(post, { withQuote = true } = {}) {
       ),
       post.body ? foldedBody(post.body) : null,
       post.images.length > 0 ? imageGrid(post.images) : null,
-      withQuote && post.quoteId !== null ? renderQuoteCard(post.quote) : null,
+      withQuote ? quoteOf(post) : null,
       h(
         "div",
         { class: "post-actions" },
@@ -382,37 +384,50 @@ function deleteButton() {
   );
 }
 
-function likeButton(post, { withLabel = false } = {}) {
+/** いいねボタン（item は投稿かコメント。コメントのボタンは action を "like-comment" にする） */
+function likeButton(item, { withLabel = false, action = "like" } = {}) {
   return h(
     "button",
     {
       type: "button",
-      class: post.liked ? "action action--like is-liked" : "action action--like",
-      dataset: { action: "like" },
-      "aria-pressed": String(post.liked),
+      class: item.liked ? "action action--like is-liked" : "action action--like",
+      dataset: { action },
+      "aria-pressed": String(item.liked),
     },
     icon("heart"),
     withLabel ? "いいね" : h("span", { class: "visually-hidden" }, "いいね"),
-    h("span", { class: "like-count" }, countLabel(post.likeCount)),
+    h("span", { class: "like-count" }, countLabel(item.likeCount)),
   );
 }
 
-/** 投稿に埋め込む引用元。quote が null なら引用元は削除済み */
-function renderQuoteCard(quote, { link = true } = {}) {
-  if (!quote) return h("div", { class: "quote-card quote-card--deleted" }, "この投稿は削除されました");
-  const thumbnail = quote.images[0];
+/** 投稿が引用している投稿かコメント（引用していなければ null） */
+function quoteOf(post) {
+  if (post.quoteId !== null) return renderQuoteCard(post.quote);
+  if (post.quoteCommentId != null) return renderQuoteCard(post.quoteComment, { isComment: true });
+  return null;
+}
+
+/**
+ * 投稿に埋め込む引用元（isComment なら、投稿ではなくコメント）。quote が null なら引用元は削除済み。
+ * コメントのカードの data-id は、そのコメントが付いている投稿の id にする（押すとその投稿を開き、投稿の削除で一緒に消える）
+ */
+function renderQuoteCard(quote, { link = true, isComment = false } = {}) {
+  const kind = isComment ? "コメント" : "投稿";
+  if (!quote) return h("div", { class: "quote-card quote-card--deleted" }, `この${kind}は削除されました`);
+  const thumbnail = quote.images?.[0];
   return h(
     "div",
     {
       class: "quote-card",
-      dataset: link ? { id: quote.id } : null,
+      dataset: link ? (isComment ? { id: quote.postId, comment: quote.id } : { id: quote.id }) : null,
       role: link ? "link" : null,
       tabindex: link ? 0 : null,
-      "aria-label": link ? `引用元: ${quote.author.name}さんの投稿を開く` : null,
+      "aria-label": link ? `引用元: ${quote.author.name}さんの${kind}を開く` : null,
     },
     h(
       "div",
       { class: "quote-main" },
+      isComment ? h("div", { class: "quote-kind" }, icon("comment"), "コメント") : null,
       h(
         "div",
         { class: "post-head" },
@@ -424,6 +439,12 @@ function renderQuoteCard(quote, { link = true } = {}) {
     ),
     thumbnail ? h("img", { class: "quote-thumb", src: thumbnail.url, alt: "", loading: "lazy", decoding: "async" }) : null,
   );
+}
+
+/** 引用元のカードを押したときに開く画面。コメントなら、その投稿をコメントの位置で開く */
+function quoteCardPath(card) {
+  const { id, comment } = card.dataset;
+  return comment ? `/p/${id}#c-${comment}` : `/p/${id}`;
 }
 
 function renderDetailPost(post) {
@@ -439,7 +460,7 @@ function renderDetailPost(post) {
     ),
     post.body ? h("div", { class: "post-body" }, linkify(post.body)) : null,
     post.images.length > 0 ? imageGrid(post.images) : null,
-    post.quoteId !== null ? renderQuoteCard(post.quote) : null,
+    quoteOf(post),
     h(
       "div",
       { class: "detail-meta" },
@@ -472,6 +493,18 @@ function renderComment(comment) {
         h("span", { class: "post-time" }, timeEl(comment.createdAt)),
       ),
       h("div", { class: "post-body" }, linkify(comment.body)),
+      h(
+        "div",
+        { class: "post-actions" },
+        h(
+          "button",
+          { type: "button", class: "action", dataset: { action: "quote-comment" } },
+          icon("quote"),
+          h("span", { class: "visually-hidden" }, "引用"),
+          h("span", { class: "quote-count" }, countLabel(comment.quoteCount)),
+        ),
+        likeButton(comment, { action: "like-comment" }),
+      ),
     ),
   );
 }
@@ -498,6 +531,17 @@ function setCounts(id, counts) {
     }
   }
   if (detail.id === id) renderDetailCounts();
+}
+
+/** コメントの件数が変わったとき（コメントは開いている投稿の詳細にだけ表示される） */
+function setCommentCounts(id, counts) {
+  const comment = detail.comments.get(id);
+  if (comment) Object.assign(comment, counts);
+  const el = ui.commentList.querySelector(`.comment[data-id="${id}"]`);
+  for (const [key, selector] of Object.entries(COUNT_SELECTORS)) {
+    const countEl = el?.querySelector(selector);
+    if (countEl && counts[key] !== undefined) countEl.textContent = countLabel(counts[key]);
+  }
 }
 
 // ---- タイムライン ----
@@ -650,7 +694,7 @@ async function openDetail(id, { focusComment = false } = {}) {
   Object.assign(detail, {
     id,
     post: null,
-    commentIds: new Set(),
+    comments: new Map(),
     lastCommentId: 0,
     hasMoreComments: false,
     quotes: null,
@@ -682,6 +726,7 @@ async function openDetail(id, { focusComment = false } = {}) {
     renderCommentsState();
     document.title = `${post.author.name}さんの投稿 - ${APP_TITLE}`;
     if (focusComment) focusCommentForm();
+    else revealLinkedComment();
   } catch (error) {
     if (token !== detail.token) return;
     ui.detailPost.replaceChildren(
@@ -718,8 +763,8 @@ function focusCommentForm() {
 }
 
 function addComment(comment, { highlight = false } = {}) {
-  if (detail.commentIds.has(comment.id)) return false;
-  detail.commentIds.add(comment.id);
+  if (detail.comments.has(comment.id)) return false;
+  detail.comments.set(comment.id, comment);
   const el = renderComment(comment);
   if (highlight) el.classList.add("is-new");
   insertById(ui.commentList, el, comment.id, false);
@@ -727,8 +772,20 @@ function addComment(comment, { highlight = false } = {}) {
 }
 
 function renderCommentsState() {
-  ui.commentsEmpty.hidden = detail.commentIds.size > 0;
+  ui.commentsEmpty.hidden = detail.comments.size > 0;
   ui.moreCommentsWrap.hidden = !detail.hasMoreComments;
+}
+
+/**
+ * URL が /p/<投稿id>#c-<コメントid> なら、そのコメントまで動いて目立たせる（引用されたコメントや通知から開いたとき）。
+ * 最初に読み込んだ分にないコメント（消えたもの・とても多いコメントの後ろのほう）は何もしない
+ */
+function revealLinkedComment() {
+  const match = /^#c-(\d{1,15})$/.exec(location.hash);
+  const el = match ? ui.commentList.querySelector(`.comment[data-id="${match[1]}"]`) : null;
+  if (!el) return;
+  el.classList.add("is-new");
+  el.scrollIntoView({ block: "center" });
 }
 
 /** コメントの続き（「さらに読み込む」と新着確認で共通） */
@@ -740,7 +797,7 @@ async function fetchNewerComments({ highlight }) {
   if (data.comments.length > 0) detail.lastCommentId = data.comments.at(-1).id;
   detail.hasMoreComments = data.hasMore;
   // 全部読み込めたら、表示しているコメントの数がそのままコメント数になる
-  const shown = detail.commentIds.size;
+  const shown = detail.comments.size;
   const count = detail.hasMoreComments ? Math.max(detail.post.commentCount, shown) : shown;
   setCounts(id, { commentCount: count });
   renderCommentsState();
@@ -866,7 +923,37 @@ function showLike(id, liked, likeCount, animate) {
   const post = posts.get(id);
   if (post) post.liked = liked;
   setCounts(id, { likeCount });
-  for (const button of document.querySelectorAll(`.post[data-id="${id}"] [data-action="like"]`)) {
+  paintLikeButtons(document.querySelectorAll(`.post[data-id="${id}"] [data-action="like"]`), liked, animate);
+}
+
+/** コメントへのいいね（投稿へのいいねと同じく、押した瞬間に表示を切り替える） */
+async function toggleCommentLike(id) {
+  const comment = detail.comments.get(id);
+  if (!comment || commentLikesSending.has(id)) return;
+  const liked = !comment.liked;
+  const before = { liked: comment.liked, likeCount: comment.likeCount };
+  commentLikesSending.add(id);
+  showCommentLike(id, liked, Math.max(0, comment.likeCount + (liked ? 1 : -1)), liked);
+  try {
+    const result = await api(`/api/comments/${id}/like`, { method: "POST", body: { liked } });
+    showCommentLike(id, result.liked, result.likeCount, false);
+  } catch (error) {
+    showCommentLike(id, before.liked, before.likeCount, false);
+    toast(error.message);
+  } finally {
+    commentLikesSending.delete(id);
+  }
+}
+
+function showCommentLike(id, liked, likeCount, animate) {
+  const comment = detail.comments.get(id);
+  if (comment) comment.liked = liked;
+  setCommentCounts(id, { likeCount });
+  paintLikeButtons(ui.commentList.querySelectorAll(`.comment[data-id="${id}"] [data-action="like-comment"]`), liked, animate);
+}
+
+function paintLikeButtons(buttons, liked, animate) {
+  for (const button of buttons) {
     button.classList.toggle("is-liked", liked);
     button.setAttribute("aria-pressed", String(liked));
     if (animate && !reducedMotion.matches) {
@@ -899,13 +986,22 @@ function removePost(id) {
     const quoted = posts.get(post.quoteId);
     if (quoted) setCounts(quoted.id, { quoteCount: Math.max(0, quoted.quoteCount - 1) });
   }
+  if (post?.quoteCommentId != null) {
+    const quoted = detail.comments.get(post.quoteCommentId);
+    if (quoted) setCommentCounts(quoted.id, { quoteCount: Math.max(0, quoted.quoteCount - 1) });
+  }
   posts.delete(id);
   timeline.shownIds.delete(id);
   timeline.pending = timeline.pending.filter((pending) => pending.id !== id);
   for (const card of document.querySelectorAll(`.post[data-id="${id}"]:not(.post--detail)`)) card.remove();
-  // この投稿を引用している投稿には「削除されました」と表示する
-  for (const quoting of posts.values()) if (quoting.quoteId === id) quoting.quote = null;
-  for (const card of document.querySelectorAll(`.quote-card[data-id="${id}"]`)) card.replaceWith(renderQuoteCard(null));
+  // この投稿や、この投稿に付いていたコメント（投稿と一緒に消える）を引用している投稿には「削除されました」と表示する
+  for (const quoting of posts.values()) {
+    if (quoting.quoteId === id) quoting.quote = null;
+    if (quoting.quoteComment?.postId === id) quoting.quoteComment = null;
+  }
+  for (const card of document.querySelectorAll(`.quote-card[data-id="${id}"]`)) {
+    card.replaceWith(renderQuoteCard(null, { isComment: card.dataset.comment !== undefined }));
+  }
   renderTimelineStatus();
   refreshProfileStatus();
 }
@@ -946,13 +1042,22 @@ async function submitComment(event) {
 
 // ---- 投稿画面 ----
 
-function openCompose({ quote = null } = {}) {
+/** 投稿画面を開く。quote: 引用する投稿 / quoteComment: 引用するコメント */
+function openCompose({ quote = null, quoteComment = null } = {}) {
   compose.quote = quote;
-  ui.composeTitle.textContent = quote ? "引用して投稿" : "新しい投稿";
-  ui.composeBody.placeholder = quote ? "コメントを添えて引用" : "いまどうしてる？";
+  compose.quoteComment = quoteComment;
+  const quoting = Boolean(quote || quoteComment);
+  ui.composeTitle.textContent = quoting ? "引用して投稿" : "新しい投稿";
+  ui.composeBody.placeholder = quoting ? "コメントを添えて引用" : "いまどうしてる？";
   ui.composeAuthor.replaceChildren(avatar(session.me, "small"), ...authorLabel(session.me));
-  ui.composeQuote.replaceChildren(quote ? renderQuoteCard(quote, { link: false }) : "");
-  ui.composeQuote.hidden = !quote;
+  ui.composeQuote.replaceChildren(
+    quote
+      ? renderQuoteCard(quote, { link: false })
+      : quoteComment
+        ? renderQuoteCard(quoteComment, { link: false, isComment: true })
+        : "",
+  );
+  ui.composeQuote.hidden = !quoting;
   ui.composeError.hidden = true;
   renderComposeImages();
   updateComposeForm();
@@ -1051,6 +1156,7 @@ async function submitCompose(event) {
   const form = new FormData();
   form.append("body", body);
   if (compose.quote) form.append("quoteId", String(compose.quote.id));
+  if (compose.quoteComment) form.append("quoteCommentId", String(compose.quoteComment.id));
   form.append("imageSizes", JSON.stringify(compose.images.map((image) => [image.width, image.height])));
   for (const image of compose.images) form.append("images", image.blob, "photo.jpg");
 
@@ -1085,6 +1191,10 @@ function handleCreatedPost(post) {
       addQuotePost(post);
       renderQuotesStatus();
     }
+  }
+  if (post.quoteCommentId !== null) {
+    const quoted = detail.comments.get(post.quoteCommentId);
+    if (quoted) setCommentCounts(quoted.id, { quoteCount: quoted.quoteCount + 1 });
   }
   if (currentView === "timeline") window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -1191,6 +1301,8 @@ async function poll() {
 function runAction(action, el) {
   const card = el.closest(".post[data-id]");
   const post = card ? posts.get(Number(card.dataset.id)) : undefined;
+  const commentEl = el.closest(".comment[data-id]");
+  const comment = commentEl ? detail.comments.get(Number(commentEl.dataset.id)) : undefined;
   switch (action) {
     case "comment":
       if (card?.classList.contains("post--detail")) focusCommentForm();
@@ -1201,6 +1313,12 @@ function runAction(action, el) {
       break;
     case "like":
       if (post) toggleLike(post.id);
+      break;
+    case "quote-comment":
+      if (comment) openCompose({ quoteComment: comment });
+      break;
+    case "like-comment":
+      if (comment) toggleCommentLike(comment.id);
       break;
     case "delete-post":
       if (post) deletePost(post.id);
@@ -1251,7 +1369,7 @@ document.addEventListener("click", (event) => {
 
   const quoteCard = target.closest(".quote-card[data-id]");
   if (quoteCard) {
-    navigate(`/p/${quoteCard.dataset.id}`);
+    navigate(quoteCardPath(quoteCard));
     return;
   }
 
@@ -1265,7 +1383,7 @@ document.addEventListener("click", (event) => {
 document.addEventListener("keydown", (event) => {
   const target = event.target;
   if (event.key === "Enter" && target instanceof Element && target.matches(".quote-card[data-id]")) {
-    navigate(`/p/${target.dataset.id}`);
+    navigate(quoteCardPath(target));
     return;
   }
   // PCでは n キーで投稿画面を開ける

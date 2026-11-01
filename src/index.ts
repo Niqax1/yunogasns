@@ -30,6 +30,7 @@ import {
   listPosts,
   listQuotes,
   postNotFound,
+  setCommentLike,
   setLike,
 } from "./posts";
 import { follow, getProfile, listFollows, listUserPosts, unfollow } from "./users";
@@ -57,8 +58,9 @@ export default {
     const cutoff = now - RETENTION_MS;
     // コメントといいねは投稿より後に作られるので、期限切れの投稿に付いたものを投稿と一緒に消す。
     // 写真は KV の期限で自動的に消える。
-    const [likes, comments, posts, sessions] = await env.DB.batch([
+    const [likes, commentLikes, comments, posts, sessions] = await env.DB.batch([
       env.DB.prepare("DELETE FROM likes WHERE post_id < ?1").bind(cutoff),
+      env.DB.prepare("DELETE FROM comment_likes WHERE comment_id IN (SELECT id FROM comments WHERE post_id < ?1)").bind(cutoff),
       env.DB.prepare("DELETE FROM comments WHERE post_id < ?1").bind(cutoff),
       env.DB.prepare("DELETE FROM posts WHERE id < ?1").bind(cutoff),
       env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?1").bind(now),
@@ -70,6 +72,7 @@ export default {
         deletedPosts: posts?.meta.changes,
         deletedComments: comments?.meta.changes,
         deletedLikes: likes?.meta.changes,
+        deletedCommentLikes: commentLikes?.meta.changes,
         deletedSessions: sessions?.meta.changes,
       }),
     );
@@ -128,12 +131,15 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
     const sub = post[2];
     if (sub === undefined && method === "GET") return getPost(env, me, postId, cutoff);
     if (sub === undefined && method === "DELETE") return deletePost(env, ctx, me, postId);
-    if (sub === "comments" && method === "GET") return listComments(env, url, postId);
+    if (sub === "comments" && method === "GET") return listComments(env, url, me, postId);
     if (sub === "comments" && method === "POST") return createComment(env, request, me, postId, now, cutoff, notifier);
     if (sub === "quotes" && method === "GET") return listQuotes(env, url, me, postId, cutoff);
     if (sub === "like" && method === "POST") return setLike(env, request, me, postId, now, cutoff, notifier);
     if (sub === "likes" && method === "GET") return listLikers(env, postId);
   }
+
+  const comment = /^\/api\/comments\/(\d{1,15})\/like$/.exec(pathname);
+  if (comment && method === "POST") return setCommentLike(env, request, me, Number(comment[1]), now, cutoff, notifier);
 
   const profile = /^\/api\/users\/([A-Za-z0-9_]{1,20})(?:\/(posts|following|followers|follow))?$/.exec(pathname);
   if (profile?.[1]) {

@@ -21,12 +21,13 @@ self.addEventListener("push", (event) => {
   );
 });
 
-// 通知を押したときに開く画面。このアプリの中のURLだけにする（"//example.com" のような別のサイトは開かない）
+// 通知を押したときに開く画面。このアプリの中のURLだけにする（"//example.com" のような別のサイトは開かない）。
+// #c-<コメントid> はコメントの位置なので残す
 function appPath(url) {
   if (typeof url !== "string") return "/";
   try {
     const target = new URL(url, self.location.origin);
-    if (target.origin === self.location.origin) return target.pathname;
+    if (target.origin === self.location.origin) return target.pathname + target.hash;
   } catch {}
   return "/";
 }
