@@ -6,6 +6,7 @@ import { api, setUnauthorizedHandler } from "./api.js";
 import { compressImage } from "./images.js";
 import { setUnreadNotices, showNotices } from "./notices.js";
 import { initProfile, refreshProfileStatus, showProfile } from "./profile.js";
+import { initPullToRefresh } from "./pull-refresh.js";
 import { forgetPushSubscription, registerServiceWorker, syncPushSubscription } from "./push.js";
 import { navigate, onRoute } from "./router.js";
 import { canDelete, posts, remember, session } from "./state.js";
@@ -1521,6 +1522,7 @@ initAdmin({
 
 history.scrollRestoration = "manual";
 applyTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+initPullToRefresh();
 updateCommentForm();
 boot();
 setInterval(poll, POLL_INTERVAL_MS);

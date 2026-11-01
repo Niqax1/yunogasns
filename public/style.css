@@ -659,6 +659,50 @@ a.post-time:hover {
   }
 }
 
+/* ---- 引っぱって更新（ホーム画面のアプリだけ。public/js/pull-refresh.js） ---- */
+
+/* 一番上でさらに引っぱったときに、画面全体が伸び縮みしないようにする（代わりに下の丸を出す） */
+:root[data-standalone],
+:root[data-standalone] body {
+  overscroll-behavior-y: none;
+}
+
+.pull-indicator {
+  position: fixed;
+  top: calc(52px + env(safe-area-inset-top));
+  left: 50%;
+  z-index: 9;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-left: -20px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-sub);
+  box-shadow: var(--shadow);
+  opacity: 0;
+  transform: translateY(-48px);
+  pointer-events: none;
+}
+
+.pull-indicator.is-ready {
+  color: var(--accent);
+}
+
+.pull-indicator.is-animating {
+  transition:
+    transform 0.2s ease-out,
+    opacity 0.2s ease-out;
+}
+
+.pull-indicator .spinner {
+  width: 22px;
+  height: 22px;
+  border-width: 2px;
+}
+
 /* ---- 投稿の詳細 ---- */
 
 .post--detail {

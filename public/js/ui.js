@@ -9,6 +9,11 @@ export const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const $ = (selector) => document.querySelector(selector);
 
+/** ホーム画面に追加したアプリとして開いているか（ブラウザのアドレスバーや再読み込みボタンがない） */
+export function isStandalone() {
+  return matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+}
+
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 /** 要素を作る。文字列の子要素はテキストとして入るので、投稿内容をそのまま渡しても安全 */

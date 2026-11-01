@@ -2,13 +2,10 @@
 // iPhone では、Safari の「ホーム画面に追加」で追加したアプリから開いたときだけ使える（iOS 16.4 以降）。
 
 import { api } from "./api.js";
+import { isStandalone } from "./ui.js";
 
 export function isIos() {
   return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-}
-
-function isStandalone() {
-  return matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 }
 
 function isSupported() {
